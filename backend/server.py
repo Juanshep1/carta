@@ -25,7 +25,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -711,6 +711,166 @@ def api_atlas():
             "featured": featured,
             "most_recent": recent[0] if recent else None,
         }
+
+
+# ---------- /api/provinces/{slug}/export.epub ----------
+# EPUB 3.0 is just a ZIP of a handful of XML files + HTML chapters. We build
+# it with stdlib `zipfile` so no new Python dep is needed.
+import io as _io
+import uuid as _uuid
+import zipfile as _zipfile
+from xml.sax.saxutils import escape as _xml_escape
+
+
+def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
+    prov_title = _xml_escape(province["name"])
+    book_id = f"urn:uuid:{_uuid.uuid4()}"
+
+    container_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n'
+        '  <rootfiles>\n'
+        '    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n'
+        '  </rootfiles>\n'
+        '</container>\n'
+    )
+    stylesheet = (
+        "@page { margin: 6% 6%; }\n"
+        "body { font-family: 'EB Garamond', Georgia, serif; line-height: 1.62; color: #1a1410; }\n"
+        "h1 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; "
+        "     margin: 0 0 0.2em 0; font-size: 1.8em; color: #1a1410; }\n"
+        "h2 { font-family: 'Fraunces', Georgia, serif; font-size: 1.3em; "
+        "     border-bottom: 1px solid rgba(26,20,16,0.2); padding-bottom: 0.15em; }\n"
+        ".kicker { color: #7a1f1f; font-family: 'IBM Plex Mono', monospace; "
+        "          letter-spacing: 0.18em; text-transform: uppercase; font-size: 0.7em; margin-bottom: 1em; }\n"
+        ".deck { font-style: italic; color: #3a2f27; margin-bottom: 1.4em; }\n"
+        "p { margin: 0.7em 0; }\n"
+        "a { color: #7a1f1f; text-decoration: none; }\n"
+        "blockquote { border-left: 2px solid #7a1f1f; padding: 0.2em 0.9em; "
+        "             font-style: italic; color: #3a2f27; margin: 1em 0; }\n"
+        "img { max-width: 100%; height: auto; display: block; margin: 1em auto; }\n"
+    )
+
+    manifest_items = [
+        '<item id="style" href="style.css" media-type="text/css"/>',
+        '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+        '<item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml"/>',
+    ]
+    spine_items = ['<itemref idref="titlepage"/>']
+    nav_items = []
+    chapter_files: list[tuple[str, str]] = []
+
+    for i, a in enumerate(articles, start=1):
+        cid = f"ch{i:03d}"
+        fname = f"{cid}.xhtml"
+        title = _xml_escape(a.get("title") or f"Chapter {i}")
+        deck = _xml_escape(a.get("deck") or a.get("summary") or "")
+        body_html = a.get("content_html") or f"<p>{_xml_escape(a.get('summary') or '')}</p>"
+        # Best-effort stripping of tags/attrs EPUB readers don't like.
+        # We trust the server's own process_article_html sanitizer; just drop
+        # <script> and inline event handlers defensively.
+        body_html = re.sub(r"<script[\s\S]*?</script>", "", body_html, flags=re.I)
+        body_html = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", body_html, flags=re.I)
+        chapter_xhtml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE html>\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml" lang="en">\n'
+            f'<head><title>{title}</title>'
+            '<link rel="stylesheet" href="style.css"/></head>\n'
+            f'<body><section>\n'
+            f'  <p class="kicker">{prov_title}</p>\n'
+            f'  <h1>{title}</h1>\n'
+            + (f'  <p class="deck">{deck}</p>\n' if deck else "")
+            + f'  {body_html}\n'
+            f'</section></body></html>\n'
+        )
+        chapter_files.append((fname, chapter_xhtml))
+        manifest_items.append(
+            f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>'
+        )
+        spine_items.append(f'<itemref idref="{cid}"/>')
+        nav_items.append(f'<li><a href="{fname}">{title}</a></li>')
+
+    titlepage_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head>'
+        f'<title>{prov_title}</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body style="text-align:center; margin-top: 30%;">'
+        f'<h1 style="font-size:2.4em;">{prov_title}</h1>'
+        f'<p class="deck">A compiled province of CARTA — {len(articles)} entries.</p>'
+        '<p style="color:#7a1f1f; letter-spacing: 0.24em; font-size: 0.8em;">§</p>'
+        '</body></html>\n'
+    )
+    nav_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" '
+        'xmlns:epub="http://www.idpf.org/2007/ops" lang="en">'
+        f'<head><title>{prov_title} — Contents</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body><nav epub:type="toc" id="toc"><h1>Contents</h1><ol>'
+        + "".join(nav_items)
+        + '</ol></nav></body></html>\n'
+    )
+    content_opf = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="book-id" xml:lang="en">\n'
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
+        f'    <dc:identifier id="book-id">{book_id}</dc:identifier>\n'
+        f'    <dc:title>{prov_title}</dc:title>\n'
+        '    <dc:language>en</dc:language>\n'
+        '    <dc:creator>CARTA — Personal Codex</dc:creator>\n'
+        f'    <meta property="dcterms:modified">{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</meta>\n'
+        '  </metadata>\n'
+        '  <manifest>\n    '
+        + "\n    ".join(manifest_items) +
+        '\n  </manifest>\n'
+        '  <spine>\n    '
+        + "\n    ".join(spine_items) +
+        '\n  </spine>\n'
+        '</package>\n'
+    )
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w") as zf:
+        # mimetype MUST be the first entry and uncompressed.
+        zf.writestr(_zipfile.ZipInfo("mimetype"),
+                    "application/epub+zip", compress_type=_zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", container_xml)
+        zf.writestr("OEBPS/content.opf", content_opf)
+        zf.writestr("OEBPS/nav.xhtml", nav_xhtml)
+        zf.writestr("OEBPS/titlepage.xhtml", titlepage_xhtml)
+        zf.writestr("OEBPS/style.css", stylesheet)
+        for fname, content in chapter_files:
+            zf.writestr(f"OEBPS/{fname}", content)
+    return buf.getvalue()
+
+
+@app.get("/api/provinces/{slug}/export.epub")
+def api_export_province_epub(slug: str):
+    with get_db() as db:
+        p = db.execute("SELECT * FROM provinces WHERE slug = ?", (slug,)).fetchone()
+        if not p:
+            raise HTTPException(404, "Unknown province")
+        rows = db.execute("""
+            SELECT slug, title, deck, summary, content_html, captured_at
+              FROM articles WHERE province_id = ?
+             ORDER BY captured_at ASC
+        """, (p["id"],)).fetchall()
+        if not rows:
+            raise HTTPException(404, "No articles in this province to compile")
+        articles = [dict(r) for r in rows]
+        data = _epub_from_articles(dict(p), articles)
+
+    filename = f"{slugify(p['name'])}.epub"
+    return Response(
+        content=data,
+        media_type="application/epub+zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- /api/provinces ----------
@@ -1401,3 +1561,121 @@ async def api_carta_quiz(req: QuizReq):
         "article": {"slug": row["slug"], "title": row["title"]},
         "questions": questions,
     }
+
+
+# ---------- /api/carta/quest ----------
+class QuestReq(BaseModel):
+    topic: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@app.post("/api/carta/quest")
+async def api_carta_quest(req: QuestReq):
+    """Build a 7-day reading curriculum around `topic` out of already-captured
+    articles. Returns {topic, days: [{day, article_slugs, quiz_count,
+    reflection}]}. If the local corpus is too thin, fewer articles are assigned
+    per day rather than failing — the plan shape is always 7 days."""
+    topic = (req.topic or "").strip()
+    if not topic:
+        raise HTTPException(400, "topic is required")
+
+    with get_db() as db:
+        rows = db.execute("""
+            SELECT a.slug, a.title, a.summary, a.deck, p.name AS province_name
+              FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
+        """).fetchall()
+    corpus = [dict(r) for r in rows]
+    if not corpus:
+        raise HTTPException(409, "No articles in the codex yet. Capture something first.")
+
+    # Rank candidates by a cheap keyword/substring match first so the prompt
+    # stays short (we hand the model only ~30 titles, not the whole corpus).
+    needles = [w for w in re.findall(r"\w{3,}", topic.lower()) if w]
+    def score(a: dict) -> int:
+        blob = " ".join([
+            (a.get("title") or "").lower(),
+            (a.get("summary") or "").lower(),
+            (a.get("deck") or "").lower(),
+            (a.get("province_name") or "").lower(),
+        ])
+        return sum(1 for n in needles if n in blob)
+    ranked = sorted(corpus, key=lambda a: (-score(a), a.get("title") or ""))
+    shortlist = ranked[:30] if ranked else corpus[:30]
+    menu = "\n".join(f"- {a['title']} [{a['slug']}] — {a.get('province_name') or '—'}"
+                     for a in shortlist)
+
+    system = (
+        "You design short, focused reading quests from Juan's personal wiki. "
+        "Output ONLY JSON, no prose. Shape:\n"
+        '{ "days": [\n'
+        '    { "day": 1, "article_slugs": ["slug-one", "slug-two"],\n'
+        '      "quiz_count": 2, "reflection": "one-sentence prompt" }\n'
+        "  ]\n"
+        "}\n"
+        "Exactly 7 days. Each day 1–3 article_slugs drawn ONLY from the list "
+        "below (use the bracketed slug, never invent). quiz_count in [0..3]. "
+        "Reflection is a single short sentence inviting Juan to write. "
+        "Order the days from introduction → deeper → synthesis."
+    )
+    user = f"Topic: {topic}\n\nAvailable articles:\n{menu}"
+
+    try:
+        raw = await ollama_chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.35, format_json=True, max_tokens=900, timeout=300,
+            provider=req.provider, model=req.model,
+        )
+    except OllamaError as e:
+        raise HTTPException(e.status, e.message)
+    except Exception as e:
+        raise HTTPException(502, f"Ollama unavailable: {e}")
+
+    raw = (raw or "").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            raise HTTPException(502, f"Could not parse quest: {raw[:200]}")
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError as e:
+            raise HTTPException(502, f"Invalid JSON from quest: {e}")
+
+    valid_slugs = {a["slug"] for a in corpus}
+    title_by_slug = {a["slug"]: a["title"] for a in corpus}
+    province_by_slug = {a["slug"]: a.get("province_name") for a in corpus}
+
+    days_out: list[dict] = []
+    for idx, d in enumerate((data.get("days") or [])[:7], start=1):
+        raw_slugs = [str(s).strip() for s in (d.get("article_slugs") or [])]
+        clean_slugs = [s for s in raw_slugs if s in valid_slugs][:3]
+        try:
+            qc = max(0, min(int(d.get("quiz_count", 1)), 3))
+        except (TypeError, ValueError):
+            qc = 1
+        reflection = str(d.get("reflection") or "").strip()
+        days_out.append({
+            "day": idx,
+            "article_slugs": clean_slugs,
+            "articles": [
+                {"slug": s, "title": title_by_slug.get(s, s),
+                 "province_name": province_by_slug.get(s)}
+                for s in clean_slugs
+            ],
+            "quiz_count": qc,
+            "reflection": reflection,
+        })
+
+    # Pad to 7 days if the model returned fewer; keep the shape stable.
+    while len(days_out) < 7:
+        days_out.append({
+            "day": len(days_out) + 1,
+            "article_slugs": [],
+            "articles": [],
+            "quiz_count": 0,
+            "reflection": "",
+        })
+
+    return {"topic": topic, "days": days_out}
