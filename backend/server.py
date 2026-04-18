@@ -491,11 +491,28 @@ def resolve_provider(provider: Optional[str], model: Optional[str]) -> tuple[str
     return OLLAMA_URL, (model or OLLAMA_MODEL), {}
 
 
+class OllamaError(Exception):
+    """Structured upstream error: carries the HTTP status so callers can
+    re-emit it cleanly instead of wrapping every case as a generic 502."""
+    def __init__(self, status: int, message: str, *, model: Optional[str] = None):
+        self.status = status
+        self.message = message
+        self.model = model
+        super().__init__(f"{status}: {message}")
+
+
+# Cloud fallback: on 403 (subscription required / capacity) or 5xx on the
+# chosen model, retry once with this model. Verified working on free tier:
+# gpt-oss:20b responds in ~0.4s with the provided key.
+CLOUD_FALLBACK_MODEL = "gpt-oss:20b"
+
+
 async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
                       format_json: bool = False, max_tokens: int = 400,
                       timeout: float = 180,
                       provider: Optional[str] = None,
-                      model: Optional[str] = None) -> str:
+                      model: Optional[str] = None,
+                      _allow_fallback: bool = True) -> str:
     base_url, chosen_model, headers = resolve_provider(provider, model)
     payload: dict[str, Any] = {
         "model": chosen_model,
@@ -505,13 +522,50 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     }
     if format_json:
         payload["format"] = "json"
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
-        r.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
+    except httpx.TimeoutException as e:
+        raise OllamaError(504, f"upstream timed out after {timeout}s", model=chosen_model) from e
+    except httpx.RequestError as e:
+        raise OllamaError(502, f"cannot reach {base_url}: {e}", model=chosen_model) from e
+
+    if r.status_code >= 400:
+        # If the user's cloud pick is gated (403 "subscription required") or
+        # flaking (5xx), transparently retry once with a known-working cloud
+        # model so the feature doesn't just fail in their face.
+        want_cloud = (provider or "").lower() == "cloud" and OLLAMA_CLOUD_KEY
+        is_fallbackable = r.status_code == 403 or 500 <= r.status_code < 600
+        if (_allow_fallback and want_cloud and is_fallbackable
+                and chosen_model != CLOUD_FALLBACK_MODEL):
+            log.info("ollama cloud: '%s' returned %d; falling back to '%s'",
+                     chosen_model, r.status_code, CLOUD_FALLBACK_MODEL)
+            return await ollama_chat(
+                messages, temperature=temperature, format_json=format_json,
+                max_tokens=max_tokens, timeout=timeout,
+                provider="cloud", model=CLOUD_FALLBACK_MODEL,
+                _allow_fallback=False,
+            )
+        # Surface the upstream's own error so the UI can show something
+        # actionable like "subscription required" or "model is cold".
+        try:
+            payload_err = r.json()
+            upstream_msg = (payload_err.get("error")
+                            or payload_err.get("message")
+                            or r.text)
+        except Exception:
+            upstream_msg = r.text or r.reason_phrase
+        msg = f"{chosen_model}: {str(upstream_msg)[:400].strip()}"
+        raise OllamaError(r.status_code, msg, model=chosen_model)
+
+    try:
         data = r.json()
-        reply = data.get("message", {}).get("content", "")
-        # strip <think> blocks some models emit
-        return re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+    except Exception as e:
+        raise OllamaError(502, f"{chosen_model}: invalid JSON response — {e}", model=chosen_model) from e
+
+    reply = data.get("message", {}).get("content", "")
+    # strip <think> blocks some models emit
+    return re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
 
 
 # ---------- FastAPI ----------
@@ -1129,10 +1183,15 @@ async def api_carta_chat(req: CartaChatReq):
             messages, temperature=0.75, max_tokens=260,
             provider=req.provider, model=req.model,
         )
+    except OllamaError as e:
+        log.error("ollama chat failed (%d): %s", e.status, e.message)
+        hint = ""
+        if e.status == 403:
+            hint = " This model likely needs a paid Ollama subscription — try `gpt-oss:20b` or switch back to Local."
+        return {"reply": f"*CARTA is elsewhere — {e.message}.*{hint}", "error": True}
     except Exception as e:
         log.error("ollama chat failed: %s", e)
-        return {"reply": f"*CARTA is elsewhere — the llama process cannot be reached.*  \n`{e}`",
-                "error": True}
+        return {"reply": f"*CARTA is elsewhere — {e}.*", "error": True}
 
     with get_db() as db:
         db.execute("INSERT INTO carta_log (role, content) VALUES ('user', ?)", (req.message,))
@@ -1180,6 +1239,8 @@ async def api_carta_draft(req: CartaDraftReq):
             messages, temperature=0.2, format_json=True, max_tokens=400,
             provider=req.provider, model=req.model,
         )
+    except OllamaError as e:
+        raise HTTPException(e.status, e.message)
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
 
@@ -1281,6 +1342,8 @@ async def api_carta_quiz(req: QuizReq):
             timeout=600,
             provider=req.provider, model=req.model,
         )
+    except OllamaError as e:
+        raise HTTPException(e.status, e.message)
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
 
