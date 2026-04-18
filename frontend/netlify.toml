@@ -1,0 +1,28 @@
+# Netlify build config for the CARTA frontend.
+# The HTML is static — no build step. Netlify just serves the /frontend folder.
+
+[build]
+  publish = "."
+  command = ""
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    # The app talks to your Pi over any *.ts.net (Tailscale Funnel) or
+    # *.trycloudflare.com (Cloudflare Tunnel). Adjust if you use a custom domain.
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self' https: http:;"
+
+# Long cache for static assets (none yet — HTML is the whole app)
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-store, must-revalidate"
+
+# SPA routing — hash routes handled client-side; any unknown path falls back to index.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

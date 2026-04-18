@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# CARTA user data — never commit
+backend/carta.db
+backend/carta.db-journal
+backend/static/images/
+*.sqlite
+
+# Local config & secrets
+.env
+.env.local
+.env.*.local
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Netlify local CLI
+.netlify/
+
+# Logs
+*.log

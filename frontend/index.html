@@ -1,0 +1,3312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CARTA — A Personal Codex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --parchment:    #f1e8d3;
+    --parchment-2:  #ebdfc2;
+    --parchment-3:  #e2d3af;
+    --parchment-deep: #d8c69a;
+    --ink:          #1a1410;
+    --ink-soft:     #3a2f27;
+    --faded:        #6d5e47;
+    --whisper:      #a89a7f;
+    --oxblood:      #7a1f1f;
+    --oxblood-deep: #4d1414;
+    --gilt:         #9b7a2e;
+    --gilt-soft:    #c4a35a;
+    --seal:         #5e1a1a;
+    --rule:         rgba(26, 20, 16, 0.18);
+    --hairline:     rgba(26, 20, 16, 0.08);
+    --shadow-page:  0 1px 0 rgba(26,20,16,0.04), 0 12px 40px -20px rgba(77,20,20,0.18);
+
+    --f-display: "Fraunces", "Times New Roman", serif;
+    --f-body:    "EB Garamond", "Georgia", serif;
+    --f-mono:    "IBM Plex Mono", "Courier New", monospace;
+  }
+
+  html {
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 17px;
+    line-height: 1.55;
+    font-feature-settings: "kern" 1, "liga" 1, "onum" 1;
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
+  }
+  body {
+    min-height: 100vh;
+    position: relative;
+    overflow-x: hidden;
+    background-image:
+      radial-gradient(at 8% 5%,  rgba(155,122,46,0.08) 0%, transparent 42%),
+      radial-gradient(at 92% 20%, rgba(122,31,31,0.06) 0%, transparent 40%),
+      radial-gradient(at 60% 95%, rgba(155,122,46,0.05) 0%, transparent 38%);
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: -20%;
+    pointer-events: none;
+    z-index: 200;
+    opacity: 0.32;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1  0 0 0 0 0.08  0 0 0 0 0.06  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 199;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(77,20,20,0.09) 100%);
+  }
+  ::selection { background: var(--oxblood); color: var(--parchment); }
+  a { color: inherit; text-decoration: none; }
+
+  /* =============== MASTHEAD =============== */
+  .masthead {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    padding: 22px 56px 18px;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 48px;
+    background: linear-gradient(to bottom, var(--parchment) 85%, rgba(241,232,211,0));
+    border-bottom: 1px solid var(--rule);
+    backdrop-filter: blur(2px);
+  }
+  .masthead::after {
+    content: "";
+    position: absolute;
+    left: 56px; right: 56px; bottom: -2px;
+    height: 1px;
+    background: var(--gilt-soft);
+    opacity: 0.45;
+  }
+  .brand { display: flex; align-items: center; gap: 16px; cursor: pointer; }
+  .sigil {
+    width: 40px; height: 40px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 2px 1px rgba(77,20,20,0.3));
+    transition: transform .4s cubic-bezier(.2,.8,.2,1);
+  }
+  .brand:hover .sigil { transform: rotate(-4deg); }
+  .wordmark {
+    font-family: var(--f-display);
+    font-optical-sizing: auto;
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+    font-weight: 500;
+    font-size: 28px;
+    letter-spacing: 0.16em;
+    color: var(--ink);
+  }
+  .tagline {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faded);
+    padding-left: 16px;
+    border-left: 1px solid var(--rule);
+    max-width: 200px;
+    line-height: 1.35;
+  }
+  .ollama-dot {
+    display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gilt);
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .ollama-dot.on { background: var(--oxblood); animation: pulse 2.4s infinite; }
+  .ollama-dot.off { background: var(--whisper); }
+  @keyframes pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
+
+  .primary-nav { display: flex; justify-content: center; gap: 40px; }
+  .primary-nav a {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 6px 0;
+    position: relative;
+    cursor: pointer;
+    transition: color .2s;
+  }
+  .primary-nav a:hover { color: var(--oxblood); }
+  .primary-nav a.active { color: var(--oxblood); }
+  .primary-nav a.active::after {
+    content: "❦";
+    position: absolute;
+    left: 50%; bottom: -14px;
+    transform: translateX(-50%);
+    font-size: 10px; color: var(--oxblood);
+  }
+
+  .controls { display: flex; align-items: center; gap: 12px; }
+  .btn {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 10px 16px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all .2s;
+  }
+  .btn:hover { border-color: var(--ink); background: rgba(26,20,16,0.04); }
+  .btn .kbd {
+    padding: 2px 5px;
+    border: 1px solid var(--rule);
+    font-size: 9px;
+    border-radius: 2px;
+    color: var(--faded);
+  }
+  .btn-seal {
+    background: var(--oxblood);
+    color: var(--parchment);
+    border-color: var(--oxblood-deep);
+  }
+  .btn-seal:hover { background: var(--oxblood-deep); color: var(--parchment); }
+  .btn-seal::before { content: "✦"; font-size: 13px; color: var(--gilt-soft); }
+
+  /* =============== MAIN =============== */
+  main { padding: 0 56px 120px; }
+  .folio {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .folio-num { color: var(--oxblood); margin-right: 10px; }
+
+  /* =============== HERO =============== */
+  .hero {
+    padding: 80px 0 60px;
+    max-width: 1400px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 80px;
+    align-items: end;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  .hero::after {
+    content: "";
+    position: absolute;
+    bottom: -2px; left: 0;
+    width: 120px; height: 1px;
+    background: var(--oxblood);
+  }
+  .hero-title {
+    font-family: var(--f-display);
+    font-optical-sizing: auto;
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: clamp(48px, 7vw, 96px);
+    line-height: 0.95;
+    letter-spacing: -0.025em;
+    color: var(--ink);
+    text-wrap: balance;
+    margin: 18px 0 28px;
+  }
+  .hero-title em {
+    font-style: italic;
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+    color: var(--oxblood);
+    font-weight: 400;
+  }
+  .hero-sub {
+    font-family: var(--f-body);
+    font-size: 20px;
+    font-style: italic;
+    color: var(--ink-soft);
+    max-width: 520px;
+    line-height: 1.5;
+  }
+  .hero-sub::first-letter { font-size: 1.4em; color: var(--oxblood); }
+  .hero-meta {
+    display: grid;
+    gap: 18px;
+    padding: 24px 28px;
+    border-left: 1px solid var(--rule);
+  }
+  .hero-meta dt {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 4px;
+  }
+  .hero-meta dd {
+    font-family: var(--f-display);
+    font-size: 36px;
+    font-variation-settings: "opsz" 144;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .hero-meta dd small {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--faded);
+    margin-left: 8px;
+    text-transform: uppercase;
+    font-weight: 400;
+  }
+
+  /* =============== SECTIONS =============== */
+  .section { max-width: 1400px; margin: 0 auto; padding: 72px 0 40px; }
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+    gap: 24px;
+  }
+  .section-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 400;
+    font-size: 32px;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+  }
+  .section-title .roman {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    color: var(--oxblood);
+    text-transform: uppercase;
+  }
+  .section-aside {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--faded);
+    font-size: 15px;
+    text-align: right;
+  }
+
+  /* =============== PROVINCES =============== */
+  .provinces {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-top: 1px solid var(--rule);
+    border-left: 1px solid var(--rule);
+  }
+  .province {
+    padding: 28px 24px 24px;
+    border-right: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    cursor: pointer;
+    position: relative;
+    transition: background .3s;
+    min-height: 220px;
+  }
+  .province:hover { background: rgba(155,122,46,0.07); }
+  .province:hover .province-arrow { transform: translateX(4px); opacity: 1; }
+  .province-symbol {
+    font-size: 28px;
+    font-family: var(--f-display);
+    color: var(--oxblood);
+    line-height: 1;
+  }
+  .province-name {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-weight: 400;
+    font-size: 24px;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+  .province-meta {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 14px;
+    border-top: 1px dashed var(--hairline);
+  }
+  .province-recent {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 14px;
+    line-height: 1.4;
+    flex: 1;
+  }
+  .province-recent span { display: block; }
+  .province-recent .empty { color: var(--whisper); font-style: italic; }
+  .province-arrow {
+    position: absolute;
+    top: 28px; right: 24px;
+    font-family: var(--f-display);
+    font-size: 18px;
+    color: var(--faded);
+    opacity: 0;
+    transition: all .3s;
+  }
+
+  /* =============== CAPTURES LIST =============== */
+  .captures { display: grid; }
+  .capture {
+    display: grid;
+    grid-template-columns: 100px 3fr 2fr 140px 100px;
+    gap: 28px;
+    align-items: baseline;
+    padding: 24px 0;
+    border-bottom: 1px solid var(--hairline);
+    cursor: pointer;
+    transition: padding-left .3s, background .3s;
+  }
+  .capture:hover { padding-left: 12px; background: rgba(155,122,46,0.04); }
+  .capture:hover .capture-title { color: var(--oxblood); }
+  .capture-date, .capture-province, .capture-read {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .capture-province { color: var(--oxblood); }
+  .capture-read { text-align: right; }
+  .capture-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -0.005em;
+    transition: color .2s;
+  }
+  .capture-excerpt {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 15px;
+    line-height: 1.4;
+  }
+
+  /* =============== FEATURED =============== */
+  .featured {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 56px;
+    padding: 48px 0;
+    border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    margin-top: 40px;
+  }
+  .featured-image {
+    aspect-ratio: 4/5;
+    background: var(--parchment-3);
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow-page);
+  }
+  .featured-image img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    filter: sepia(8%) contrast(0.96);
+  }
+  .featured-caption {
+    position: absolute;
+    bottom: 16px; left: 16px;
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--parchment);
+    background: rgba(26,20,16,0.82);
+    padding: 6px 10px;
+  }
+  .featured-body { padding: 20px 0; }
+  .featured-kicker {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 14px;
+  }
+  .featured-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: 52px;
+    line-height: 0.98;
+    letter-spacing: -0.02em;
+    margin-bottom: 24px;
+    text-wrap: balance;
+  }
+  .featured-title em {
+    font-style: italic; color: var(--oxblood);
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+  }
+  .featured-deck {
+    font-family: var(--f-body);
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin-bottom: 28px;
+  }
+  .featured-deck::first-letter {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-size: 3.2em;
+    float: left;
+    line-height: 0.9;
+    padding: 4px 10px 0 0;
+    color: var(--oxblood);
+    font-weight: 400;
+  }
+  .featured-meta {
+    display: flex;
+    gap: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--hairline);
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    flex-wrap: wrap;
+  }
+  .featured-meta strong { color: var(--ink); font-weight: 500; }
+  .featured-meta a { color: var(--oxblood); text-decoration: underline;
+    text-decoration-color: var(--gilt-soft); text-underline-offset: 3px; cursor: pointer; }
+
+  /* =============== ARTICLE VIEW =============== */
+  .article-view { display: none; max-width: 1400px; margin: 0 auto; padding: 48px 0 80px; }
+  body.view-article .article-view { display: block; }
+  body.view-article .view-home { display: none; }
+  body.view-province .view-home { display: none; }
+  body.view-province .province-view { display: block; }
+
+  .breadcrumb {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 40px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .breadcrumb a { cursor: pointer; }
+  .breadcrumb a:hover { color: var(--oxblood); }
+  .breadcrumb .sep { color: var(--whisper); }
+
+  .article-header {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 72px;
+    padding-bottom: 48px;
+    border-bottom: 2px solid var(--ink);
+    align-items: end;
+  }
+  .article-kicker {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 18px;
+  }
+  .article-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 20;
+    font-weight: 300;
+    font-size: clamp(48px, 6vw, 88px);
+    line-height: 0.94;
+    letter-spacing: -0.03em;
+    color: var(--ink);
+    text-wrap: balance;
+    margin-bottom: 24px;
+  }
+  .article-title em {
+    font-style: italic; color: var(--oxblood);
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+  }
+  .article-deck {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 22px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    max-width: 640px;
+  }
+  .article-meta-box {
+    padding: 24px 28px;
+    border-left: 1px solid var(--rule);
+    display: grid;
+    gap: 16px;
+  }
+  .article-meta-box dt {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 4px;
+  }
+  .article-meta-box dd {
+    font-family: var(--f-body);
+    font-size: 16px;
+    color: var(--ink);
+    word-break: break-word;
+  }
+  .article-meta-box dd a {
+    color: var(--oxblood);
+    text-decoration: underline;
+    text-decoration-color: var(--gilt-soft);
+    text-underline-offset: 3px;
+  }
+  .article-meta-box dd a:hover { text-decoration-color: var(--oxblood); }
+
+  .article-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 56px;
+    padding-top: 56px;
+  }
+
+  /* --- prose (Wikipedia content rendered beautifully) --- */
+  .prose {
+    font-family: var(--f-body);
+    font-size: 19px;
+    line-height: 1.65;
+    color: var(--ink);
+    min-width: 0;
+    max-width: none;
+    counter-reset: section;
+  }
+  .prose p { margin-bottom: 1.2em; }
+  .prose > p:first-of-type::first-letter,
+  .prose > section:first-of-type > p:first-of-type::first-letter {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 400;
+    font-size: 5.4em;
+    float: left;
+    line-height: 0.85;
+    padding: 6px 14px 0 0;
+    color: var(--oxblood);
+  }
+  .prose > p:first-of-type::first-line,
+  .prose > section:first-of-type > p:first-of-type::first-line {
+    font-variant: small-caps;
+    letter-spacing: 0.05em;
+  }
+  .prose h2 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-weight: 500;
+    font-size: 28px;
+    margin: 2.4em 0 0.6em;
+    letter-spacing: -0.005em;
+    position: relative;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    counter-increment: section;
+    scroll-margin-top: 110px;
+  }
+  .prose h2::before {
+    content: "§ " counter(section);
+    position: absolute;
+    left: -72px; top: 20px;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    color: var(--oxblood);
+    font-weight: 400;
+  }
+  .prose h3, .prose h4 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-weight: 500;
+    font-style: italic;
+    font-size: 21px;
+    margin: 1.6em 0 0.5em;
+    color: var(--ink-soft);
+  }
+  .prose h4 { font-size: 18px; }
+  .prose a {
+    color: var(--oxblood);
+    text-decoration: underline;
+    text-decoration-color: var(--gilt-soft);
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+  }
+  .prose a:hover { text-decoration-color: var(--oxblood); }
+  .prose blockquote {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+    font-style: italic;
+    font-weight: 300;
+    font-size: 28px;
+    line-height: 1.25;
+    color: var(--ink);
+    margin: 1.6em 0 1.6em -36px;
+    padding: 0 0 0 36px;
+    border-left: 2px solid var(--oxblood);
+  }
+  .prose ul, .prose ol { margin: 0 0 1.2em 1.6em; }
+  .prose ul li, .prose ol li { margin-bottom: 0.4em; }
+  .prose ul { list-style: none; }
+  .prose ul li { position: relative; padding-left: 18px; }
+  .prose ul li::before {
+    content: "❧";
+    position: absolute; left: 0; top: 0;
+    color: var(--oxblood); font-size: 0.85em;
+  }
+  .prose figure {
+    margin: 1.8em 0;
+    padding: 0;
+  }
+  .prose figure img, .prose img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    background: var(--parchment-2);
+    box-shadow: var(--shadow-page);
+    border: 1px solid var(--hairline);
+  }
+  .prose figcaption {
+    margin-top: 12px;
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--faded);
+    line-height: 1.4;
+    padding-left: 18px;
+    border-left: 1px solid var(--oxblood);
+  }
+  .prose figcaption strong, .prose figcaption b {
+    color: var(--ink); font-weight: 500; font-style: normal;
+    font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase;
+  }
+  .prose table {
+    border-collapse: collapse;
+    margin: 1.4em 0;
+    font-size: 15px;
+    width: 100%;
+    font-family: var(--f-body);
+  }
+  .prose table th, .prose table td {
+    border-bottom: 1px solid var(--rule);
+    padding: 10px 14px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .prose table th {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    font-weight: 500;
+    background: rgba(155,122,46,0.06);
+  }
+  .prose section { margin-bottom: 1em; }
+  .prose section > figure { float: right; max-width: 360px; margin: 0 0 1em 2em; }
+  .prose section::after { content: ""; display: block; clear: both; }
+  .prose hr {
+    border: 0;
+    text-align: center;
+    margin: 2em 0;
+  }
+  .prose hr::before { content: "❦ ❦ ❦"; color: var(--oxblood); letter-spacing: 1em; font-size: 14px; }
+
+  /* --- marginalia rail --- */
+  .marginalia {
+    padding-top: 6px;
+    position: sticky;
+    top: 110px;
+    align-self: start;
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .marginalia::-webkit-scrollbar { width: 3px; }
+  .marginalia::-webkit-scrollbar-thumb { background: var(--whisper); }
+  .margin-block { padding: 20px 0; border-bottom: 1px solid var(--hairline); }
+  .margin-block:last-child { border-bottom: 0; }
+  .margin-label {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .margin-label::before {
+    content: ""; width: 18px; height: 1px; background: var(--oxblood);
+  }
+  .margin-note {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink);
+    margin-bottom: 10px;
+  }
+  .margin-note small {
+    display: block;
+    font-family: var(--f-mono);
+    font-style: normal;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-top: 6px;
+  }
+  .margin-note.carta { border-left: 2px solid var(--oxblood); padding-left: 10px; }
+  .margin-add {
+    width: 100%;
+    background: transparent;
+    border: 1px dashed var(--rule);
+    padding: 10px;
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--ink);
+    min-height: 52px;
+    resize: vertical;
+    outline: none;
+  }
+  .margin-add:focus { border-color: var(--oxblood); border-style: solid; }
+  .margin-add-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
+  .margin-add-row button {
+    font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+    padding: 4px 10px; border: 1px solid var(--rule); background: transparent;
+    color: var(--oxblood); cursor: pointer;
+  }
+  .margin-add-row button:hover { background: var(--oxblood); color: var(--parchment); }
+  .toc { display: grid; gap: 6px; }
+  .toc a {
+    font-family: var(--f-body);
+    font-size: 15px;
+    color: var(--ink-soft);
+    padding: 3px 0;
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px dashed var(--hairline);
+    cursor: pointer;
+  }
+  .toc a:hover { color: var(--oxblood); }
+  .toc a span:last-child { font-family: var(--f-mono); font-size: 10px; color: var(--whisper); }
+
+  .margin-related { display: grid; gap: 8px; }
+  .margin-related a {
+    font-family: var(--f-display);
+    font-size: 17px;
+    line-height: 1.2;
+    color: var(--ink);
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--hairline);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .margin-related a:hover { color: var(--oxblood); }
+  .margin-related a small {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    flex-shrink: 0;
+  }
+  .margin-related a.external { font-style: italic; color: var(--ink-soft); }
+
+  /* =============== PROVINCE VIEW =============== */
+  .province-view { display: none; max-width: 1400px; margin: 0 auto; padding: 48px 0 80px; }
+  body.view-province .province-view { display: block; }
+  .province-header {
+    padding-bottom: 32px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 32px;
+  }
+  .province-header h1 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: clamp(48px, 6vw, 88px);
+    line-height: 0.94;
+    letter-spacing: -0.03em;
+    margin: 10px 0 16px;
+  }
+  .province-header p {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 20px;
+    color: var(--ink-soft);
+    max-width: 640px;
+  }
+  .province-count {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-top: 14px;
+  }
+  .province-articles {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 32px;
+    margin-top: 24px;
+  }
+  .province-card {
+    border-top: 1px solid var(--rule);
+    padding: 20px 0 24px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    transition: background .2s;
+  }
+  .province-card:hover { background: rgba(155,122,46,0.05); padding-left: 8px; padding-right: 8px; margin-left: -8px; margin-right: -8px; }
+  .province-card:hover .province-card-title { color: var(--oxblood); }
+  .province-card-img {
+    aspect-ratio: 16/10;
+    background: var(--parchment-3);
+    overflow: hidden;
+    margin-bottom: 4px;
+    box-shadow: var(--shadow-page);
+  }
+  .province-card-img img { width: 100%; height: 100%; object-fit: cover; filter: sepia(6%) contrast(0.96); }
+  .province-card-meta {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .province-card-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    transition: color .2s;
+  }
+  .province-card-deck {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 15px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+
+  /* =============== CARTA DRAWER =============== */
+  .carta-drawer {
+    position: fixed;
+    top: 0; right: 0;
+    width: 440px;
+    height: 100vh;
+    background: var(--parchment);
+    border-left: 1px solid var(--ink);
+    box-shadow: -40px 0 80px -30px rgba(77,20,20,0.35);
+    transform: translateX(100%);
+    transition: transform .5s cubic-bezier(.6,.05,.25,1);
+    z-index: 80;
+    display: flex;
+    flex-direction: column;
+  }
+  .carta-drawer.open { transform: translateX(0); }
+  .carta-drawer::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(to right, var(--oxblood), var(--gilt), var(--oxblood));
+  }
+  .carta-head {
+    padding: 28px 32px 24px;
+    border-bottom: 1px solid var(--rule);
+    position: relative;
+  }
+  .carta-wordmark {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 8px;
+  }
+  .carta-wordmark .sigil { width: 34px; height: 34px; }
+  .carta-wordmark-text {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-weight: 500;
+    font-size: 24px;
+    letter-spacing: 0.2em;
+  }
+  .carta-status {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .carta-status::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--oxblood);
+    animation: pulse 2.4s infinite;
+  }
+  .carta-status.thinking::before { background: var(--gilt); }
+  .carta-status.offline::before { background: var(--whisper); animation: none; }
+  .carta-close {
+    position: absolute;
+    top: 28px; right: 28px;
+    width: 28px; height: 28px;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--ink-soft);
+    font-family: var(--f-display);
+    font-size: 20px;
+    background: transparent;
+    border: 1px solid var(--rule);
+  }
+  .carta-close:hover { color: var(--oxblood); border-color: var(--oxblood); }
+
+  .carta-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 32px 20px;
+    display: grid;
+    gap: 24px;
+    align-content: start;
+  }
+  .carta-scroll::-webkit-scrollbar { width: 4px; }
+  .carta-scroll::-webkit-scrollbar-thumb { background: var(--whisper); }
+  .msg { display: grid; gap: 6px; }
+  .msg-from {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .msg.carta .msg-from { color: var(--oxblood); }
+  .msg-body {
+    font-family: var(--f-body);
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+  .msg-body em { font-style: italic; color: var(--oxblood); }
+  .msg.carta .msg-body {
+    font-style: italic;
+    padding-left: 14px;
+    border-left: 1px solid var(--oxblood);
+  }
+  .msg.user .msg-body {
+    padding: 12px 14px;
+    background: rgba(26,20,16,0.04);
+    border-left: 1px solid var(--rule);
+  }
+  .msg-action {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border: 1px solid var(--rule);
+    background: rgba(155,122,46,0.06);
+    display: grid;
+    gap: 8px;
+    font-family: var(--f-mono);
+    font-size: 11px;
+  }
+  .msg-action strong {
+    font-weight: 500;
+    color: var(--oxblood);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+  .msg-action-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .msg-action-row span:last-child {
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 14px;
+    text-align: right;
+    letter-spacing: 0;
+  }
+  .msg-action-buttons {
+    display: flex;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--hairline);
+  }
+  .msg-action-buttons .btn { flex: 1; justify-content: center; padding: 8px; font-size: 10px; }
+
+  .carta-input-wrap {
+    padding: 20px 32px 28px;
+    border-top: 1px solid var(--rule);
+    background: var(--parchment-2);
+  }
+  .carta-input-hint {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .carta-input {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    background: var(--parchment);
+    border: 1px solid var(--rule);
+    padding: 12px 14px;
+    transition: border-color .2s;
+  }
+  .carta-input:focus-within { border-color: var(--oxblood); }
+  .carta-input textarea {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    resize: none;
+    font-family: var(--f-body);
+    font-size: 17px;
+    line-height: 1.4;
+    color: var(--ink);
+    min-height: 26px;
+    max-height: 140px;
+    outline: none;
+  }
+  .carta-input textarea::placeholder { color: var(--whisper); font-style: italic; }
+  .carta-send {
+    width: 36px; height: 36px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: 0;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background .2s;
+    flex-shrink: 0;
+  }
+  .carta-send:hover { background: var(--oxblood-deep); }
+  .carta-send:disabled { background: var(--whisper); cursor: not-allowed; }
+  .carta-send svg { width: 16px; height: 16px; }
+
+  /* =============== CAPTURE MODAL =============== */
+  .capture-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(26,20,16,0.55);
+    z-index: 90;
+    display: none;
+    place-items: center;
+    padding: 40px;
+    backdrop-filter: blur(4px);
+  }
+  .capture-modal.open { display: grid; }
+  .capture-dialog {
+    width: 100%;
+    max-width: 820px;
+    max-height: 90vh;
+    background: var(--parchment);
+    border: 1px solid var(--ink);
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.5);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+    position: relative;
+  }
+  .capture-dialog::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(to right, var(--oxblood), var(--gilt), var(--oxblood));
+  }
+  .capture-head {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+  }
+  .capture-head h2 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 400;
+    font-size: 36px;
+    letter-spacing: -0.01em;
+  }
+  .capture-head h2 em { font-style: italic; color: var(--oxblood); }
+  .capture-head p {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-top: 6px;
+  }
+  .capture-body { padding: 32px 40px 36px; overflow-y: auto; }
+  .mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    margin-bottom: 32px;
+    border: 1px solid var(--rule);
+  }
+  .mode-switch button {
+    padding: 14px 20px;
+    background: transparent;
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    cursor: pointer;
+    border-right: 1px solid var(--rule);
+    position: relative;
+  }
+  .mode-switch button:last-child { border-right: 0; }
+  .mode-switch button.active { background: var(--ink); color: var(--parchment); }
+  .mode-switch button.active::after {
+    content: "";
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid var(--ink);
+  }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .form-field { display: grid; gap: 8px; }
+  .form-field.full { grid-column: 1 / -1; }
+  .form-field label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .form-field label .opt { color: var(--whisper); font-size: 9px; }
+  .form-field input,
+  .form-field select,
+  .form-field textarea {
+    font-family: var(--f-body);
+    font-size: 18px;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 8px 0;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .form-field input:focus,
+  .form-field select:focus,
+  .form-field textarea:focus { border-bottom-color: var(--oxblood); }
+  .form-field textarea {
+    resize: vertical;
+    min-height: 60px;
+    font-style: italic;
+    line-height: 1.5;
+  }
+  .form-actions {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+  }
+  .form-hint {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--faded);
+    max-width: 440px;
+  }
+  .form-submit {
+    padding: 14px 28px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .form-submit:hover { background: var(--oxblood-deep); }
+  .form-submit:disabled { background: var(--whisper); cursor: not-allowed; }
+
+  .dictate-panel { display: none; }
+  .dictate-panel.active { display: block; }
+  .form-panel.inactive { display: none; }
+
+  .dictate-intro {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    padding-bottom: 24px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .dictate-intro .sigil { width: 48px; height: 48px; flex-shrink: 0; }
+  .dictate-intro p {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 18px;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+
+  .draft-preview {
+    margin-top: 24px;
+    padding: 20px;
+    border: 1px solid var(--rule);
+    background: rgba(155,122,46,0.05);
+    display: none;
+  }
+  .draft-preview.open { display: grid; gap: 10px; }
+  .draft-preview h4 {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 8px;
+  }
+  .draft-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--hairline);
+    font-family: var(--f-body);
+    font-size: 16px;
+  }
+  .draft-row dt {
+    font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--faded);
+    align-self: center;
+  }
+  .draft-row dd { color: var(--ink); }
+  .draft-row dd em { color: var(--oxblood); font-style: italic; }
+  .draft-confirm {
+    margin-top: 10px;
+    font-style: italic;
+    color: var(--ink-soft);
+    padding: 10px 12px;
+    border-left: 2px solid var(--oxblood);
+    font-family: var(--f-body);
+    font-size: 16px;
+  }
+
+  /* =============== SEARCH PALETTE =============== */
+  .search-palette {
+    position: fixed;
+    inset: 0;
+    background: rgba(26,20,16,0.5);
+    z-index: 95;
+    display: none;
+    place-items: start center;
+    padding: 120px 20px 20px;
+    backdrop-filter: blur(3px);
+  }
+  .search-palette.open { display: grid; }
+  .search-box {
+    width: 100%;
+    max-width: 680px;
+    background: var(--parchment);
+    border: 1px solid var(--ink);
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.4);
+  }
+  .search-input-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .search-input-row svg { width: 18px; height: 18px; color: var(--oxblood); }
+  .search-input-row input {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-size: 24px;
+    color: var(--ink);
+    outline: none;
+  }
+  .search-input-row input::placeholder { color: var(--whisper); font-style: italic; }
+  .search-esc {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    padding: 4px 8px;
+    border: 1px solid var(--rule);
+  }
+  .search-results { max-height: 460px; overflow-y: auto; }
+  .search-group {
+    padding: 14px 24px 8px;
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+    border-top: 1px solid var(--hairline);
+  }
+  .search-result {
+    padding: 12px 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    cursor: pointer;
+  }
+  .search-result:hover, .search-result.active { background: rgba(155,122,46,0.1); }
+  .search-result-title {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-size: 20px;
+    color: var(--ink);
+  }
+  .search-result-meta {
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .search-empty {
+    padding: 24px;
+    text-align: center;
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--faded);
+  }
+  .search-foot {
+    padding: 12px 24px;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid var(--rule);
+    background: var(--parchment-2);
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--faded);
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .search-foot strong { color: var(--ink); font-weight: 500; }
+
+  /* =============== LOGIN / SETTINGS SCREEN =============== */
+  .login-screen {
+    position: fixed;
+    inset: 0;
+    background: var(--parchment);
+    z-index: 300;
+    display: none;
+    place-items: center;
+    padding: 40px 20px;
+    background-image:
+      radial-gradient(at 8% 5%, rgba(155,122,46,0.10) 0%, transparent 42%),
+      radial-gradient(at 92% 80%, rgba(122,31,31,0.08) 0%, transparent 40%);
+  }
+  .login-screen.open { display: grid; }
+  .login-card {
+    max-width: 460px;
+    width: 100%;
+    padding: 48px 44px;
+    border: 1px solid var(--ink);
+    background: var(--parchment);
+    box-shadow: var(--shadow-page);
+    position: relative;
+  }
+  .login-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(to right, var(--oxblood), var(--gilt), var(--oxblood));
+  }
+  .login-card .sigil {
+    width: 56px; height: 56px;
+    margin-bottom: 18px;
+  }
+  .login-card h1 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: 48px;
+    letter-spacing: 0.14em;
+    margin-bottom: 4px;
+  }
+  .login-card .sub {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 28px;
+  }
+  .login-intro {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 17px;
+    margin-bottom: 28px;
+    line-height: 1.5;
+  }
+  .login-intro em { font-style: italic; color: var(--oxblood); }
+  .login-field { display: grid; gap: 8px; margin-bottom: 20px; }
+  .login-field label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .login-field input {
+    font-family: var(--f-body);
+    font-size: 17px;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 8px 0;
+    outline: none;
+  }
+  .login-field input:focus { border-bottom-color: var(--oxblood); }
+  .login-msg {
+    padding: 10px 14px;
+    background: rgba(122,31,31,0.08);
+    border-left: 2px solid var(--oxblood);
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 14px;
+    color: var(--ink-soft);
+    margin-bottom: 20px;
+    display: none;
+  }
+  .login-msg.show { display: block; }
+  .login-submit {
+    width: 100%;
+    padding: 14px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    min-height: 48px;
+  }
+  .login-submit:hover { background: var(--oxblood-deep); }
+  .login-foot {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--hairline);
+    font-family: var(--f-body);
+    font-size: 13px;
+    font-style: italic;
+    color: var(--faded);
+    line-height: 1.4;
+  }
+
+  @media (max-width: 520px) {
+    .login-card { padding: 32px 24px; }
+    .login-card h1 { font-size: 38px; }
+  }
+
+  /* =============== CONFIRM DIALOG =============== */
+  .confirm-dialog {
+    position: fixed;
+    inset: 0;
+    background: rgba(26,20,16,0.55);
+    z-index: 105;
+    display: none;
+    place-items: center;
+    padding: 20px;
+    backdrop-filter: blur(3px);
+  }
+  .confirm-dialog.open { display: grid; }
+  .confirm-box {
+    background: var(--parchment);
+    border: 1px solid var(--ink);
+    padding: 32px 32px 24px;
+    max-width: 440px;
+    width: 100%;
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.5);
+    position: relative;
+  }
+  .confirm-box::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(to right, var(--oxblood), var(--gilt), var(--oxblood));
+  }
+  .confirm-label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 14px;
+  }
+  .confirm-body {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1.2;
+    color: var(--ink);
+    margin-bottom: 28px;
+    text-wrap: balance;
+  }
+  .confirm-body em {
+    font-style: italic;
+    color: var(--oxblood);
+    font-variation-settings: "opsz" 144, "SOFT" 100;
+  }
+  .confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .confirm-actions .btn { padding: 12px 18px; min-height: 44px; }
+
+  /* =============== TOAST =============== */
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(120%);
+    background: var(--ink);
+    color: var(--parchment);
+    padding: 14px 24px;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    z-index: 110;
+    transition: transform .4s;
+    max-width: 520px;
+    border-left: 3px solid var(--oxblood);
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.err { border-left-color: var(--gilt); }
+  .toast.ok  { border-left-color: var(--oxblood); }
+
+  /* =============== PERFORMANCE =============== */
+  .prose figure, .prose section {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 360px;
+  }
+
+  /* =============== CHAT LINKS =============== */
+  .msg .chat-link {
+    color: var(--oxblood);
+    text-decoration: underline;
+    text-decoration-color: var(--gilt-soft);
+    text-underline-offset: 3px;
+    cursor: pointer;
+    font-style: normal;
+  }
+  .msg .chat-link:hover { text-decoration-color: var(--oxblood); }
+  .msg.carta .msg-body .chat-link { font-style: normal; }
+
+  /* =============== META ACTION LINK =============== */
+  .article-meta-box dd a.action-link {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    text-decoration: none;
+    border-bottom: 1px solid var(--gilt-soft);
+    padding-bottom: 2px;
+    color: var(--oxblood);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .article-meta-box dd a.action-link:hover {
+    border-bottom-color: var(--oxblood);
+  }
+
+  /* =============== EMPTY STATE =============== */
+  .empty-state {
+    text-align: center;
+    padding: 80px 20px;
+    font-family: var(--f-body);
+    color: var(--faded);
+    font-style: italic;
+    font-size: 18px;
+  }
+  .empty-state h3 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: 42px;
+    color: var(--ink);
+    margin-bottom: 18px;
+    font-style: normal;
+  }
+  .empty-state h3 em { font-style: italic; color: var(--oxblood); }
+  .empty-state .cta {
+    display: inline-flex;
+    gap: 12px;
+    margin-top: 28px;
+  }
+
+  /* =============== LOADING =============== */
+  .page-loading {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    z-index: 150;
+    background: var(--parchment);
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+    transition: opacity .5s;
+  }
+  .page-loading.hide { opacity: 0; pointer-events: none; }
+  .page-loading .spin {
+    font-family: var(--f-display);
+    font-size: 48px;
+    color: var(--oxblood);
+    margin-bottom: 14px;
+    animation: slow-spin 3.6s linear infinite;
+    display: block;
+  }
+  @keyframes slow-spin { to { transform: rotate(360deg); } }
+
+  .progress-bar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px;
+    width: 0;
+    background: var(--oxblood);
+    z-index: 120;
+    transition: width .2s;
+  }
+  .progress-bar.active { width: 100%; transition: width 25s cubic-bezier(.1,.6,.3,1); }
+
+  /* =============== FOOTER =============== */
+  footer {
+    max-width: 1400px;
+    margin: 60px auto 0;
+    padding: 48px 56px;
+    border-top: 2px solid var(--ink);
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 40px;
+    align-items: center;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  footer .colophon {
+    font-family: var(--f-body);
+    font-style: italic;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 15px;
+    color: var(--ink-soft);
+    max-width: 520px;
+    justify-self: center;
+    text-align: center;
+  }
+  footer .colophon::before { content: "❦ "; color: var(--oxblood); }
+  footer .colophon::after  { content: " ❦"; color: var(--oxblood); }
+
+  /* =============== RESPONSIVE =============== */
+  html { scroll-padding-top: 110px; }
+  button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+  /* Tablets and small laptops */
+  @media (max-width: 1100px) {
+    main { padding: 0 40px 80px; }
+    .hero { grid-template-columns: 1fr; gap: 36px; padding: 60px 0 44px; }
+    .hero-meta { padding: 22px 26px; }
+    .provinces { grid-template-columns: repeat(2, 1fr); }
+    .featured { grid-template-columns: 1fr; gap: 40px; }
+    .featured-title { font-size: 44px; }
+    .capture { grid-template-columns: 80px 1fr 120px; }
+    .capture-excerpt, .capture-read { display: none; }
+    .article-header { grid-template-columns: 1fr; gap: 36px; padding-bottom: 36px; }
+    .article-meta-box {
+      border-left: 0; padding: 24px 0 0; margin-top: 8px;
+      border-top: 1px solid var(--rule); grid-template-columns: repeat(2, 1fr);
+    }
+    .article-meta-box > div { padding: 8px 0; }
+    .article-body { grid-template-columns: 1fr; gap: 48px; }
+    .marginalia {
+      position: static; max-height: none; padding-top: 32px;
+      border-top: 2px solid var(--ink);
+    }
+    .province-articles { grid-template-columns: repeat(2, 1fr); }
+    .primary-nav { display: none; }
+    .prose h2::before { display: none; }
+    .prose section > figure { float: none; max-width: 100%; margin: 1.4em 0; }
+    .section-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .section-aside { text-align: left; }
+    footer { grid-template-columns: 1fr; text-align: center; gap: 18px; padding: 32px 40px; }
+    footer .colophon { justify-self: center; }
+  }
+
+  /* Phones */
+  @media (max-width: 720px) {
+    html { font-size: 16px; scroll-padding-top: 76px; }
+
+    .masthead {
+      padding: 12px 18px;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+    }
+    .brand { gap: 12px; }
+    .sigil { width: 34px; height: 34px; }
+    .wordmark { font-size: 22px; letter-spacing: 0.14em; }
+    .tagline { display: none; }
+    .controls { gap: 8px; }
+    .controls .btn:not(.btn-seal) { display: none; }
+    .btn-seal {
+      padding: 10px 14px;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      min-height: 44px;
+    }
+    .btn-seal::before { display: none; }
+
+    main { padding: 0 20px 60px; }
+
+    .hero { padding: 36px 0 28px; gap: 26px; }
+    .hero-title { font-size: clamp(38px, 11vw, 56px); margin: 14px 0 20px; }
+    .hero-sub { font-size: 17px; }
+    .hero-meta { padding: 18px 20px; gap: 14px; }
+    .hero-meta dd { font-size: 24px; }
+
+    .section { padding: 44px 0 24px; }
+    .section-title { font-size: 24px; gap: 10px; }
+    .section-title .roman { font-size: 10px; }
+
+    .provinces { grid-template-columns: 1fr; }
+    .province { min-height: auto; padding: 22px 18px; gap: 10px; }
+    .province-arrow { display: none; }
+    .province-recent span { font-size: 13px; }
+
+    .capture {
+      grid-template-columns: 1fr auto;
+      grid-template-rows: auto auto;
+      column-gap: 12px;
+      row-gap: 4px;
+      padding: 16px 0;
+    }
+    .capture-date  { grid-column: 1; grid-row: 1; font-size: 9px; }
+    .capture-title { grid-column: 1 / -1; grid-row: 2; font-size: 19px; }
+    .capture-province { grid-column: 2; grid-row: 1; font-size: 9px; text-align: right; }
+    .capture:hover { padding-left: 0; }
+
+    .featured { padding: 32px 0; gap: 28px; }
+    .featured-image { aspect-ratio: 3/4; }
+    .featured-title { font-size: 34px; margin-bottom: 18px; }
+    .featured-deck { font-size: 16px; margin-bottom: 22px; }
+    .featured-meta { gap: 14px; font-size: 9px; }
+
+    .empty-state { padding: 48px 14px; font-size: 16px; }
+    .empty-state h3 { font-size: 32px; }
+    .empty-state .cta { flex-direction: column; gap: 10px; align-items: stretch; }
+
+    .article-view { padding: 24px 0 56px; }
+    .breadcrumb { margin-bottom: 24px; font-size: 9px; flex-wrap: wrap; gap: 8px; }
+    .article-header { gap: 24px; padding-bottom: 28px; }
+    .article-kicker { font-size: 10px; margin-bottom: 14px; }
+    .article-title { font-size: clamp(32px, 10vw, 48px); margin-bottom: 18px; }
+    .article-deck { font-size: 18px; }
+    .article-meta-box { grid-template-columns: 1fr; gap: 12px; }
+    .article-meta-box dd { font-size: 15px; }
+
+    .article-body { gap: 36px; padding-top: 28px; }
+    .prose { font-size: 17px; line-height: 1.6; max-width: 100%; }
+    .prose h2 { font-size: 22px; margin: 1.8em 0 0.5em; padding-top: 16px; border-top-width: 1px; }
+    .prose h3 { font-size: 18px; }
+    .prose blockquote { font-size: 21px; margin: 1.2em 0; padding: 0 0 0 16px; }
+    .prose table { display: block; overflow-x: auto; white-space: nowrap; font-size: 13px; }
+    .prose figcaption { font-size: 13px; padding-left: 14px; }
+    .prose img { max-width: 100%; height: auto; }
+
+    .marginalia { padding-top: 28px; }
+    .margin-note { font-size: 14px; }
+    .toc a { font-size: 14px; }
+    .margin-related a { font-size: 16px; }
+
+    .province-view { padding: 24px 0 56px; }
+    .province-header h1 { font-size: clamp(32px, 9vw, 48px); }
+    .province-header p { font-size: 17px; }
+    .province-articles { grid-template-columns: 1fr; gap: 24px; }
+    .province-card { padding: 16px 0 20px; }
+    .province-card-title { font-size: 22px; }
+
+    .carta-drawer { width: 100%; }
+    .carta-head { padding: 22px 22px 18px; }
+    .carta-wordmark-text { font-size: 21px; }
+    .carta-scroll { padding: 22px 22px 16px; gap: 20px; }
+    .carta-input-wrap { padding: 14px 20px 18px; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+    .carta-input textarea { font-size: 16px; } /* prevents iOS zoom */
+    .msg-body { font-size: 16px; }
+    .msg-action-row { flex-direction: column; align-items: flex-start; gap: 2px; }
+    .msg-action-row span:last-child { text-align: left; font-size: 15px; }
+
+    .capture-modal { padding: 16px 12px; }
+    .capture-dialog { max-height: 94vh; }
+    .capture-head { padding: 22px 22px 16px; }
+    .capture-head h2 { font-size: 26px; }
+    .capture-body { padding: 22px; }
+    .mode-switch button { padding: 14px 8px; font-size: 9px; letter-spacing: 0.18em; min-height: 48px; }
+    .form-grid { grid-template-columns: 1fr; gap: 18px; }
+    .form-field input, .form-field select, .form-field textarea { font-size: 16px; }
+    .form-actions { flex-direction: column; align-items: stretch; gap: 14px; }
+    .form-hint { font-size: 13px; }
+    .form-submit {
+      width: 100%;
+      justify-content: center;
+      padding: 16px;
+      min-height: 50px;
+      font-size: 11px;
+    }
+    .dictate-intro { gap: 14px; padding-bottom: 18px; margin-bottom: 18px; }
+    .dictate-intro .sigil { width: 40px; height: 40px; }
+    .dictate-intro p { font-size: 16px; }
+    .draft-row { grid-template-columns: 100px 1fr; font-size: 15px; }
+
+    .search-palette { padding: 80px 12px 16px; }
+    .search-box { max-width: 100%; }
+    .search-input-row { padding: 16px 18px; }
+    .search-input-row input { font-size: 18px; } /* >=16 prevents iOS zoom */
+    .search-result { padding: 14px 18px; }
+    .search-result-title { font-size: 17px; }
+    .search-foot { padding: 10px 14px; font-size: 8px; letter-spacing: 0.15em; gap: 6px; }
+
+    .toast {
+      left: 14px; right: 14px; bottom: 14px;
+      max-width: none;
+      transform: translateX(0) translateY(150%);
+      font-size: 10px;
+      padding: 14px 18px;
+    }
+    .toast.show { transform: translateX(0) translateY(0); }
+
+    footer { padding: 28px 20px; gap: 14px; }
+    footer .colophon { font-size: 13px; }
+  }
+
+  /* Extra small */
+  @media (max-width: 380px) {
+    .masthead { padding: 10px 14px; }
+    .brand .wordmark { font-size: 20px; }
+    main { padding: 0 16px 48px; }
+    .hero-title { font-size: 34px; }
+    .article-title { font-size: 30px; }
+    .featured-title { font-size: 28px; }
+  }
+
+  /* =============== ANIMATIONS =============== */
+  @keyframes riseIn {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .rise { animation: riseIn .8s cubic-bezier(.2,.8,.2,1) both; }
+  .rise-1 { animation-delay: .05s; }
+  .rise-2 { animation-delay: .15s; }
+  .rise-3 { animation-delay: .25s; }
+  .rise-4 { animation-delay: .35s; }
+  .rise-5 { animation-delay: .45s; }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progress"></div>
+<div class="page-loading" id="pageLoading">
+  <div style="text-align:center">
+    <span class="spin">❦</span>
+    Gathering the codex…
+  </div>
+</div>
+
+<!-- ============ MASTHEAD ============ -->
+<header class="masthead">
+  <div class="brand" onclick="nav('')">
+    <svg class="sigil" viewBox="0 0 100 100">
+      <defs>
+        <radialGradient id="seal-grad" cx="0.5" cy="0.4">
+          <stop offset="0" stop-color="#8a2525"/>
+          <stop offset="1" stop-color="#4d1414"/>
+        </radialGradient>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="url(#seal-grad)" stroke="#2a0a0a" stroke-width="1"/>
+      <circle cx="50" cy="50" r="40" fill="none" stroke="#c4a35a" stroke-width="0.6" stroke-dasharray="2 3"/>
+      <circle cx="50" cy="50" r="34" fill="none" stroke="#c4a35a" stroke-width="0.4"/>
+      <text x="50" y="60" text-anchor="middle" font-family="Fraunces, serif" font-size="38" font-weight="400" fill="#f1e8d3" font-style="italic">C</text>
+      <g opacity="0.6" fill="#c4a35a">
+        <circle cx="50" cy="14" r="1.2"/><circle cx="86" cy="50" r="1.2"/>
+        <circle cx="50" cy="86" r="1.2"/><circle cx="14" cy="50" r="1.2"/>
+      </g>
+    </svg>
+    <div><div class="wordmark">CARTA</div></div>
+    <div class="tagline" onclick="showLogin()" style="cursor:pointer" title="Backend settings">
+      <span class="ollama-dot" id="ollamaDot"></span>
+      <span id="ollamaStatus">Checking Ollama…</span>
+    </div>
+  </div>
+
+  <nav class="primary-nav">
+    <a class="active" id="navAtlas" onclick="nav('')">Atlas</a>
+    <a onclick="scrollToSection('provinces')">Provinces</a>
+    <a onclick="scrollToSection('recent')">Recent</a>
+    <a onclick="openCapture()">Capture</a>
+  </nav>
+
+  <div class="controls">
+    <button class="btn" onclick="openSearch()">
+      <span>Search</span><span class="kbd">⌘K</span>
+    </button>
+    <button class="btn btn-seal" onclick="toggleCarta()">Summon CARTA</button>
+  </div>
+</header>
+
+<!-- ============ HOME VIEW ============ -->
+<main class="view-home">
+
+  <section class="hero">
+    <div class="rise rise-1">
+      <div class="folio"><span class="folio-num">Folio I</span> — The Atlas of What I Have Learned</div>
+      <h1 class="hero-title">An <em>atlas</em> of<br>things I have<br>come to know.</h1>
+      <p class="hero-sub">A private library, kept by hand — a place where curiosity is given shelves, and nothing I have learned is lost to the small oblivion of not-writing-it-down.</p>
+    </div>
+    <dl class="hero-meta rise rise-2">
+      <div><dt>Articles</dt><dd><span id="statArticles">—</span> <small>entries</small></dd></div>
+      <div><dt>Provinces</dt><dd><span id="statProvinces">—</span> <small>categories</small></dd></div>
+      <div><dt>Marginalia</dt><dd><span id="statMarginalia">—</span> <small>personal notes</small></dd></div>
+      <div>
+        <dt>Most Recent Capture</dt>
+        <dd id="statMostRecent" style="font-size:22px">—</dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- Empty state -->
+  <div class="empty-state" id="emptyState" style="display:none">
+    <h3>The codex is <em>empty</em>.</h3>
+    <p>Capture your first entry, or tell CARTA what you have learned.<br>
+    She will find the Wikipedia article, pull the plates, and file it under the right shelf.</p>
+    <div class="cta">
+      <button class="btn btn-seal" onclick="openCapture()">Capture an entry</button>
+      <button class="btn" onclick="toggleCarta()">Summon CARTA</button>
+    </div>
+  </div>
+
+  <!-- Provinces -->
+  <section class="section rise rise-3" id="sec-provinces" data-section="provinces">
+    <div class="section-head">
+      <h2 class="section-title"><span class="roman">I.</span> The Provinces</h2>
+      <span class="section-aside">Each a continent of curiosity — organized, cross-referenced, forever growing.</span>
+    </div>
+    <div class="provinces" id="provincesGrid"></div>
+  </section>
+
+  <!-- Recent -->
+  <section class="section rise rise-4" id="sec-recent" data-section="recent">
+    <div class="section-head">
+      <h2 class="section-title"><span class="roman">II.</span> Recent Captures</h2>
+      <span class="section-aside">The most recent learnings, newest first.</span>
+    </div>
+    <div class="captures" id="capturesList"></div>
+  </section>
+
+  <!-- Featured -->
+  <section class="section rise rise-5" id="sec-featured">
+    <div class="section-head">
+      <h2 class="section-title"><span class="roman">III.</span> From the Shelves</h2>
+      <span class="section-aside">Pulled at random from the stacks — an article worth a second reading.</span>
+    </div>
+    <article class="featured" id="featuredArticle" style="display:none"></article>
+  </section>
+
+</main>
+
+<!-- ============ PROVINCE VIEW ============ -->
+<div class="province-view" id="provinceView">
+  <div class="breadcrumb">
+    <a onclick="nav('')">The Codex</a>
+    <span class="sep">/</span>
+    <span id="pvCrumb" style="color:var(--ink)">—</span>
+  </div>
+  <div class="province-header">
+    <div class="folio" id="pvFolio">Province</div>
+    <h1 id="pvName">—</h1>
+    <p id="pvDesc">—</p>
+    <div class="province-count" id="pvCount">—</div>
+  </div>
+  <div class="province-articles" id="pvArticles"></div>
+</div>
+
+<!-- ============ ARTICLE VIEW ============ -->
+<div class="article-view" id="articleView">
+  <div class="breadcrumb">
+    <a onclick="nav('')">The Codex</a>
+    <span class="sep">/</span>
+    <a id="artCrumbProvince">—</a>
+    <span class="sep">/</span>
+    <span id="artCrumbTitle" style="color:var(--ink)">—</span>
+  </div>
+
+  <header class="article-header">
+    <div>
+      <div class="article-kicker" id="artKicker">—</div>
+      <h1 class="article-title" id="artTitle">—</h1>
+      <p class="article-deck" id="artDeck">—</p>
+    </div>
+    <dl class="article-meta-box" id="artMeta"></dl>
+  </header>
+
+  <div class="article-body">
+    <article class="prose" id="artProse"></article>
+    <aside class="marginalia" id="artMarginalia"></aside>
+  </div>
+</div>
+
+<!-- ============ CARTA DRAWER ============ -->
+<aside class="carta-drawer" id="cartaDrawer">
+  <div class="carta-head">
+    <div class="carta-wordmark">
+      <svg class="sigil" viewBox="0 0 100 100">
+        <defs>
+          <radialGradient id="seal-grad-2" cx="0.5" cy="0.4">
+            <stop offset="0" stop-color="#8a2525"/><stop offset="1" stop-color="#4d1414"/>
+          </radialGradient>
+        </defs>
+        <circle cx="50" cy="50" r="46" fill="url(#seal-grad-2)" stroke="#2a0a0a" stroke-width="1"/>
+        <circle cx="50" cy="50" r="40" fill="none" stroke="#c4a35a" stroke-width="0.6" stroke-dasharray="2 3"/>
+        <text x="50" y="60" text-anchor="middle" font-family="Fraunces, serif" font-size="38" fill="#f1e8d3" font-style="italic">C</text>
+      </svg>
+      <span class="carta-wordmark-text">CARTA</span>
+    </div>
+    <div class="carta-status" id="cartaStatus">ready to chat</div>
+    <button class="carta-close" onclick="toggleCarta()">×</button>
+  </div>
+  <div class="carta-scroll" id="cartaLog"></div>
+  <div class="carta-input-wrap">
+    <div class="carta-input-hint">
+      <span>Speak freely · CARTA runs locally · nothing leaves the Pi</span>
+      <span id="cartaModel">llama</span>
+    </div>
+    <div class="carta-input">
+      <textarea id="cartaInput" placeholder="Tell CARTA what you have learned…" rows="1"></textarea>
+      <button class="carta-send" id="cartaSend" onclick="sendCarta()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M15 1L1 7l5 2 2 5z"/></svg>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ CAPTURE MODAL ============ -->
+<div class="capture-modal" id="captureModal">
+  <div class="capture-dialog">
+    <div class="capture-head">
+      <div>
+        <h2>Capture an <em>entry</em></h2>
+        <p>add to the codex · two ways</p>
+      </div>
+      <button class="carta-close" onclick="closeCapture()" style="position:static">×</button>
+    </div>
+    <div class="capture-body">
+      <div class="mode-switch">
+        <button class="active" id="modeForm" onclick="switchMode('form')">Fill the manuscript</button>
+        <button id="modeCarta" onclick="switchMode('carta')">Dictate to CARTA</button>
+      </div>
+
+      <form class="form-panel" id="panelForm" onsubmit="submitCapture(event)">
+        <div class="form-grid">
+          <div class="form-field full">
+            <label>Topic</label>
+            <input type="text" id="f-topic" placeholder="e.g. Elliptic Curve Cryptography" required>
+          </div>
+          <div class="form-field">
+            <label>Province <span class="opt">(or type a new one)</span></label>
+            <input list="provinceList" id="f-province" placeholder="Natural Sciences">
+            <datalist id="provinceList"></datalist>
+          </div>
+          <div class="form-field">
+            <label>Sub-heading <span class="opt">(optional)</span></label>
+            <input type="text" id="f-subheading" placeholder="e.g. Quantum Mechanics">
+          </div>
+          <div class="form-field full">
+            <label>Wikipedia title or URL <span class="opt">(leave blank — CARTA will find it)</span></label>
+            <input type="text" id="f-wiki" placeholder="Quantum entanglement">
+          </div>
+          <div class="form-field full">
+            <label>Your opening marginalia <span class="opt">(your first note on why this mattered)</span></label>
+            <textarea id="f-marg" placeholder="Today I learned that what Einstein called ghostly, Bell proved was real…"></textarea>
+          </div>
+        </div>
+        <div class="form-actions">
+          <p class="form-hint">CARTA will fetch the Wikipedia article, mirror images locally, and render it in the codex's typographic grammar. All stored on this Pi.</p>
+          <button class="form-submit" type="submit" id="formSubmitBtn">Commit · <span style="color:var(--gilt-soft)">✦</span></button>
+        </div>
+      </form>
+
+      <div class="dictate-panel" id="panelCarta">
+        <div class="dictate-intro">
+          <svg class="sigil" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="46" fill="#7a1f1f" stroke="#2a0a0a"/>
+            <text x="50" y="60" text-anchor="middle" font-family="Fraunces" font-size="38" fill="#f1e8d3" font-style="italic">C</text>
+          </svg>
+          <p>"Tell me only what caught your attention. I shall find the article, pull the plates, propose the province, and leave room for your own hand in the margins."</p>
+        </div>
+        <div class="form-field full">
+          <label>Your account</label>
+          <textarea id="d-desc" rows="4" placeholder="I just read about octopus cognition. They have decentralized neurons across their arms…"></textarea>
+        </div>
+        <div class="draft-preview" id="draftPreview">
+          <h4>CARTA has drafted the entry</h4>
+          <dl id="draftMeta"></dl>
+          <div class="draft-confirm" id="draftConfirm"></div>
+        </div>
+        <div class="form-actions">
+          <p class="form-hint" id="dictateHint">CARTA runs on the llama model on this Pi. Nothing is sent anywhere except to your local codex.</p>
+          <button class="form-submit" id="dictateBtn" onclick="dictateDraft()">Let CARTA proceed · <span style="color:var(--gilt-soft)">✦</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SEARCH PALETTE ============ -->
+<div class="search-palette" id="searchPalette">
+  <div class="search-box">
+    <div class="search-input-row">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="5"/><path d="M11 11l4 4"/></svg>
+      <input type="text" id="searchInput" placeholder="Search entries, marginalia, provinces…" autocomplete="off">
+      <span class="search-esc">esc</span>
+    </div>
+    <div class="search-results" id="searchResults">
+      <div class="search-empty">Begin typing to search the codex.</div>
+    </div>
+    <div class="search-foot">
+      <span><strong>↑↓</strong> navigate</span>
+      <span><strong>↵</strong> open</span>
+      <span><strong>esc</strong> close</span>
+    </div>
+  </div>
+</div>
+
+<!-- Login / Settings screen -->
+<div class="login-screen" id="loginScreen">
+  <form class="login-card" onsubmit="saveLogin(event)">
+    <svg class="sigil" viewBox="0 0 100 100">
+      <defs>
+        <radialGradient id="seal-grad-login" cx="0.5" cy="0.4">
+          <stop offset="0" stop-color="#8a2525"/><stop offset="1" stop-color="#4d1414"/>
+        </radialGradient>
+      </defs>
+      <circle cx="50" cy="50" r="46" fill="url(#seal-grad-login)" stroke="#2a0a0a"/>
+      <circle cx="50" cy="50" r="40" fill="none" stroke="#c4a35a" stroke-width="0.6" stroke-dasharray="2 3"/>
+      <text x="50" y="60" text-anchor="middle" font-family="Fraunces, serif" font-size="38" fill="#f1e8d3" font-style="italic">C</text>
+    </svg>
+    <h1>CARTA</h1>
+    <p class="sub">your personal codex</p>
+    <p class="login-intro">Tell CARTA where your <em>Pi</em> lives and what key unlocks it. She'll remember on this device.</p>
+    <div class="login-msg" id="loginMsg"></div>
+    <div class="login-field">
+      <label>Backend URL</label>
+      <input id="loginBase" type="url" autocomplete="off" spellcheck="false"
+             placeholder="https://juanspi5.tail12345.ts.net" required>
+    </div>
+    <div class="login-field">
+      <label>API key</label>
+      <input id="loginKey" type="password" autocomplete="current-password" spellcheck="false"
+             placeholder="paste your CARTA_API_KEY here" required>
+    </div>
+    <button class="login-submit" type="submit">Connect to the codex</button>
+    <p class="login-foot">Running the Pi server on the same device? Leave both blank and press <em>Connect</em>.</p>
+  </form>
+</div>
+
+<!-- Confirm dialog -->
+<div class="confirm-dialog" id="confirmDialog">
+  <div class="confirm-box">
+    <p class="confirm-label" id="confirmLabel">New entry</p>
+    <p class="confirm-body" id="confirmBody">—</p>
+    <div class="confirm-actions">
+      <button class="btn" id="confirmNo">Cancel</button>
+      <button class="btn btn-seal" id="confirmYes">Yes</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<footer>
+  <div>MMXXVI · Folio I</div>
+  <div class="colophon">Set in Fraunces, EB Garamond, and IBM Plex Mono. Hand-bound on a Raspberry Pi. CARTA reads only what you have let her read.</div>
+  <div id="footRev">Rev. —</div>
+</footer>
+
+<script>
+/* ============================================================
+   CARTA frontend — talks to the FastAPI backend at /api/*
+   Hash routing: #/province/:slug  ·  #/article/:slug  ·  #/
+============================================================ */
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- CARTA runtime config ----------
+// When served FROM the Pi (same origin), both stay empty and the app uses relative URLs.
+// When served FROM Netlify, the user configures these via the login screen.
+const CARTA = {
+  base: (localStorage.getItem("carta_api_base") || "").replace(/\/$/, ""),
+  key: localStorage.getItem("carta_api_key") || "",
+};
+
+function cartaSaveConfig(base, key) {
+  CARTA.base = (base || "").replace(/\/$/, "");
+  CARTA.key = key || "";
+  localStorage.setItem("carta_api_base", CARTA.base);
+  localStorage.setItem("carta_api_key", CARTA.key);
+}
+
+function cartaClearConfig() {
+  localStorage.removeItem("carta_api_base");
+  localStorage.removeItem("carta_api_key");
+  CARTA.base = ""; CARTA.key = "";
+}
+
+// Prepend backend base when we're on Netlify. Empty when same-origin.
+function cartaUrl(path) { return (CARTA.base || "") + path; }
+
+// Rewrite image srcs inside HTML strings so <img src="/static/…"> resolves to the Pi
+function fixContentUrls(html) {
+  if (!CARTA.base) return html;
+  return (html || "").replace(/(="|=')\/static\//g, `$1${CARTA.base}/static/`);
+}
+
+// State
+let atlasData = null;
+let cartaHistory = [];
+let lastDraft = null;
+let progressTimer = null;
+let currentArticleData = null;
+
+// ---------- utilities ----------
+function api(path, opts = {}) {
+  const { timeout = 120000, ...fetchOpts } = opts;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    CARTA.key ? { "Authorization": "Bearer " + CARTA.key } : {},
+    fetchOpts.headers || {},
+  );
+  return fetch(cartaUrl(path), {
+    signal: ctrl.signal,
+    ...fetchOpts,
+    headers,
+  }).then(async (r) => {
+    clearTimeout(timer);
+    if (r.status === 401) {
+      showLogin("That key didn't work. Try again.");
+      throw new Error("unauthorized");
+    }
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`${r.status} ${t || r.statusText}`);
+    }
+    return r.json();
+  }, (err) => {
+    clearTimeout(timer);
+    if (err.name === "AbortError") throw new Error("Request timed out");
+    throw err;
+  });
+}
+
+// In-page confirm replacing window.confirm (works on mobile + matches aesthetic)
+function confirmDialog({ label = "Confirm", body, yes = "Yes", no = "Cancel" }) {
+  return new Promise((resolve) => {
+    const dlg = $("confirmDialog");
+    $("confirmLabel").textContent = label;
+    $("confirmBody").innerHTML = body;
+    $("confirmYes").textContent = yes;
+    $("confirmNo").textContent = no;
+    dlg.classList.add("open");
+    const done = (v) => {
+      dlg.classList.remove("open");
+      $("confirmYes").onclick = null;
+      $("confirmNo").onclick = null;
+      document.removeEventListener("keydown", keyHandler);
+      resolve(v);
+    };
+    const keyHandler = (e) => {
+      if (e.key === "Escape") done(false);
+      if (e.key === "Enter") done(true);
+    };
+    $("confirmYes").onclick = () => done(true);
+    $("confirmNo").onclick = () => done(false);
+    document.addEventListener("keydown", keyHandler);
+    setTimeout(() => $("confirmYes").focus(), 50);
+  });
+}
+
+function toast(msg, kind = "ok") {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = `toast show ${kind}`;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), 4000);
+}
+
+function progressStart() {
+  $("progress").classList.add("active");
+}
+function progressEnd() {
+  const p = $("progress");
+  p.classList.remove("active");
+  p.style.width = "0";
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso.replace(" ", "T") + (iso.endsWith("Z") ? "" : "Z"));
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function fmtAbsolute(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso.replace(" ", "T") + (iso.endsWith("Z") ? "" : "Z"));
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
+}
+
+function mdToSpan(s) {
+  // very light: *italic*
+  return (s || "").replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+}
+
+function parseCartaLinks(html) {
+  // Convert [[Title]] → clickable link. Click is delegated via #cartaLog listener.
+  return html.replace(/\[\[([^\]|\n]+)\]\]/g, (_, escapedTitle) => {
+    const t = escapedTitle.trim();
+    const s = slugify(t);
+    return `<a class="chat-link" data-slug="${s}" data-title="${t.replace(/"/g, "&quot;")}">${t}</a>`;
+  });
+}
+
+function roman(n) {
+  const romans = ["", "I","II","III","IV","V","VI","VII","VIII","IX","X",
+    "XI","XII","XIII","XIV","XV","XVI","XVII","XVIII","XIX","XX"];
+  return romans[n] || String(n);
+}
+
+// ---------- routing ----------
+function nav(hash) {
+  if (hash && !hash.startsWith("#")) hash = "#/" + hash;
+  if (location.hash === hash || (hash === "" && (location.hash === "" || location.hash === "#/"))) {
+    handleRoute();
+  } else {
+    location.hash = hash || "/";
+  }
+}
+
+function handleRoute() {
+  const h = location.hash.replace(/^#\/?/, "");
+  document.body.classList.remove("view-article", "view-province");
+  if (h.startsWith("article/")) {
+    document.body.classList.add("view-article");
+    openArticleView(decodeURIComponent(h.slice(8)));
+  } else if (h.startsWith("province/")) {
+    document.body.classList.add("view-province");
+    openProvinceView(decodeURIComponent(h.slice(9)));
+  } else {
+    window.scrollTo({ top: 0 });
+  }
+}
+
+window.addEventListener("hashchange", handleRoute);
+
+function scrollToSection(name) {
+  if (document.body.classList.contains("view-article") || document.body.classList.contains("view-province")) {
+    nav("");
+    setTimeout(() => scrollToSection(name), 50);
+    return;
+  }
+  const target = document.querySelector(`[data-section="${name}"]`);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ---------- ATLAS ----------
+async function loadAtlas() {
+  try {
+    atlasData = await api("/api/atlas", { timeout: 8000 });
+    renderAtlas(atlasData);
+  } catch (e) {
+    toast("Could not load the atlas: " + e.message, "err");
+  }
+}
+
+// One-shot capture used by wiki-link click + chat-link click
+async function captureAndOpen(title, province) {
+  progressStart();
+  try {
+    const res = await api("/api/capture", {
+      method: "POST",
+      timeout: 180000,
+      body: JSON.stringify({
+        topic: title,
+        wikipedia_title: title,
+        province: province || null,
+      }),
+    });
+    toast(`Saved ${res.title} · ${res.image_count} plates`, "ok");
+    await loadAtlas();
+    nav(`article/${res.slug}`);
+  } catch (e) {
+    toast("Couldn't capture: " + e.message, "err");
+  } finally {
+    progressEnd();
+  }
+}
+
+// Click handler for [[Title]] links inside CARTA chat bubbles
+async function chatLinkClick(slug, title) {
+  try {
+    const r = await fetch(`/api/articles/${encodeURIComponent(slug)}`);
+    if (r.ok) { nav(`article/${slug}`); return; }
+  } catch {}
+  const ok = await confirmDialog({
+    label: "New entry",
+    body: `CARTA mentioned <em>${escapeHtml(title)}</em> — it isn't in your wiki yet. Add it?`,
+    yes: "Yes, capture it",
+    no: "Not now",
+  });
+  if (ok) captureAndOpen(title, null);
+}
+
+function renderAtlas(data) {
+  const { stats, provinces, recent, featured, most_recent } = data;
+  $("statArticles").textContent = stats.articles;
+  $("statProvinces").textContent = stats.provinces;
+  $("statMarginalia").textContent = stats.marginalia;
+  $("statMostRecent").innerHTML = most_recent
+    ? `${most_recent.title}<br><small style="margin-left:0">${fmtAbsolute(most_recent.captured_at)}</small>`
+    : `— <small style="margin-left:0">the codex awaits</small>`;
+
+  // Empty state
+  if (stats.articles === 0) {
+    $("emptyState").style.display = "block";
+    $("sec-recent").style.display = "none";
+    $("sec-featured").style.display = "none";
+  } else {
+    $("emptyState").style.display = "none";
+    $("sec-recent").style.display = "";
+    $("sec-featured").style.display = "";
+  }
+
+  // Provinces
+  const pgrid = $("provincesGrid");
+  pgrid.innerHTML = provinces.map(p => `
+    <article class="province" onclick="nav('province/${p.slug}')">
+      <div class="province-symbol">${p.icon || "❦"}</div>
+      <div class="province-name">${p.name}</div>
+      <div class="province-recent">
+        ${p.recent.length
+          ? p.recent.map(r => `<span>— ${escapeHtml(r)}</span>`).join("")
+          : `<span class="empty">— nothing yet filed here —</span>`}
+      </div>
+      <div class="province-meta">
+        <span>${String(p.article_count).padStart(3, "0")} entries</span>
+        <span>view all →</span>
+      </div>
+      <span class="province-arrow">→</span>
+    </article>
+  `).join("");
+
+  // Province datalist for capture form
+  $("provinceList").innerHTML = provinces
+    .map(p => `<option value="${escapeHtml(p.name)}">`).join("");
+
+  // Recent captures
+  const clist = $("capturesList");
+  clist.innerHTML = recent.map(c => `
+    <article class="capture" onclick="nav('article/${c.slug}')">
+      <div class="capture-date">${fmtDate(c.captured_at)}</div>
+      <div class="capture-title">${escapeHtml(c.title)}</div>
+      <div class="capture-excerpt">${escapeHtml((c.deck || c.summary || "").slice(0, 140))}</div>
+      <div class="capture-province">${escapeHtml(c.province_name || "—")}</div>
+      <div class="capture-read">${c.read_minutes || 1} min</div>
+    </article>
+  `).join("");
+
+  // Featured
+  if (featured) {
+    const img = featured.lead_image
+      ? `<img src="${cartaUrl('/static/images/' + featured.lead_image)}" alt="">`
+      : `<div style="width:100%;height:100%;display:grid;place-items:center;font-family:var(--f-display);font-size:84px;color:var(--oxblood);opacity:.4">❦</div>`;
+    $("featuredArticle").style.display = "";
+    $("featuredArticle").innerHTML = `
+      <div class="featured-image">
+        ${img}
+        <span class="featured-caption">Plate · Wikimedia · public domain</span>
+      </div>
+      <div class="featured-body">
+        <div class="featured-kicker">${escapeHtml(featured.province_name || "The Codex")} · Captured ${fmtAbsolute(featured.captured_at)}</div>
+        <h3 class="featured-title">${escapeHtml(featured.title)}</h3>
+        <p class="featured-deck">${escapeHtml(featured.deck || featured.summary || "").slice(0, 520)}</p>
+        <div class="featured-meta">
+          <span><strong>${featured.read_minutes || 1}</strong> min read</span>
+          <span><strong>${featured.marginalia_count}</strong> marginalia</span>
+          <span><strong>${featured.word_count || "—"}</strong> words</span>
+          <a onclick="nav('article/${featured.slug}')">Open the article →</a>
+        </div>
+      </div>`;
+  } else {
+    $("featuredArticle").style.display = "none";
+  }
+
+  $("footRev").textContent = `Rev. ${Date.now().toString().slice(0, 10)}`;
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, m => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[m]);
+}
+
+// ---------- PROVINCE VIEW ----------
+async function openProvinceView(slug) {
+  window.scrollTo({ top: 0 });
+  try {
+    const data = await api(`/api/provinces/${encodeURIComponent(slug)}`);
+    const p = data.province;
+    $("pvCrumb").textContent = p.name;
+    $("pvFolio").innerHTML = `<span class="folio-num">${p.icon || "❦"}</span> Province of`;
+    $("pvName").textContent = p.name;
+    $("pvDesc").textContent = p.description || "";
+    $("pvCount").textContent = `${data.articles.length} ${data.articles.length === 1 ? "entry" : "entries"}`;
+    $("pvArticles").innerHTML = data.articles.length ? data.articles.map(a => `
+      <article class="province-card" onclick="nav('article/${a.slug}')">
+        ${a.lead_image
+          ? `<div class="province-card-img"><img src="${cartaUrl('/static/images/' + a.lead_image)}" alt=""></div>`
+          : ""}
+        <div class="province-card-meta">${fmtDate(a.captured_at)} · ${a.read_minutes || 1} min</div>
+        <div class="province-card-title">${escapeHtml(a.title)}</div>
+        <div class="province-card-deck">${escapeHtml((a.deck || a.summary || "").slice(0, 180))}</div>
+      </article>
+    `).join("") : `<div class="empty-state"><h3>Nothing <em>filed</em> here yet.</h3><p>Capture your first entry for this province.</p></div>`;
+  } catch (e) {
+    toast("Could not load province: " + e.message, "err");
+    nav("");
+  }
+}
+
+// ---------- ARTICLE VIEW ----------
+async function openArticleView(slug) {
+  window.scrollTo({ top: 0 });
+  try {
+    const a = await api(`/api/articles/${encodeURIComponent(slug)}`);
+    currentArticleData = a;
+    $("artCrumbProvince").textContent = a.province_name || "—";
+    $("artCrumbProvince").onclick = () => a.province_slug && nav(`province/${a.province_slug}`);
+    $("artCrumbTitle").textContent = a.title;
+    $("artKicker").textContent = [a.province_name, a.subheading].filter(Boolean).join(" · ") || "The Codex";
+    $("artTitle").innerHTML = escapeHtml(a.title);
+    $("artDeck").textContent = a.deck || a.summary || "";
+
+    const meta = [
+      ["Captured", `${fmtAbsolute(a.captured_at)} — via CARTA`],
+      ["Source", a.wiki_url
+        ? `<a href="${a.wiki_url}" target="_blank" rel="noopener">en.wikipedia.org/wiki/${escapeHtml((a.wiki_title || "").replace(/ /g, "_"))}</a>`
+        : "—"],
+      ["Revision", a.wiki_revid ? `Rev. ${a.wiki_revid} · mirrored locally` : "mirrored locally"],
+      ["Words", `${a.word_count || "—"} (${a.read_minutes || 1} min read)`],
+      ["Actions", `<a class="action-link" onclick="refreshArticle('${a.slug}')">↻ Refresh from Wikipedia</a>`],
+    ];
+    $("artMeta").innerHTML = meta.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+
+    $("artProse").innerHTML = fixContentUrls(a.content_html) || "<p>—</p>";
+    // Intercept wiki-link clicks — navigate if captured, else ask "add this?"
+    $("artProse").querySelectorAll("a[data-wiki]").forEach(a2 => {
+      a2.addEventListener("click", async (ev) => {
+        ev.preventDefault();
+        const t = a2.getAttribute("data-wiki");
+        if (!t) return;
+        const targetSlug = slugify(t);
+        try {
+          const r = await fetch(`/api/articles/${encodeURIComponent(targetSlug)}`);
+          if (r.ok) { nav(`article/${targetSlug}`); return; }
+        } catch {}
+        const province = currentArticleData?.province_name || null;
+        const ok = await confirmDialog({
+          label: "New entry",
+          body: `Add <em>${escapeHtml(t)}</em> to your wiki${province ? ` under <em>${escapeHtml(province)}</em>` : ""}?`,
+          yes: "Yes, capture it",
+          no: "Not now",
+        });
+        if (ok) captureAndOpen(t, province);
+      });
+    });
+
+    // Hide any image that fails to load (breaks in the wild: 404, bad SVG, etc.)
+    $("artProse").querySelectorAll("img").forEach(img => {
+      img.setAttribute("decoding", "async");
+      img.addEventListener("error", () => {
+        const fig = img.closest("figure");
+        if (fig) fig.style.display = "none";
+        else img.style.display = "none";
+      });
+    });
+
+    // Marginalia rail
+    const tocHtml = (a.toc || []).map(t =>
+      `<a onclick="document.getElementById('${t.id}').scrollIntoView({behavior:'smooth'})"><span>${escapeHtml(t.text)}</span><span>§ ${t.n}</span></a>`
+    ).join("");
+    const margHtml = (a.marginalia || []).map(m => `
+      <div class="margin-note ${m.source === "carta" ? "carta" : ""}">
+        ${mdToSpan(escapeHtml(m.content))}
+        <small>${fmtAbsolute(m.created_at)} · ${m.source}</small>
+      </div>
+    `).join("");
+    const xrefsHtml = (a.cross_refs || []).map(x =>
+      x.existing_slug
+        ? `<a onclick="nav('article/${x.existing_slug}')"><span>${escapeHtml(x.target_title)}</span><small>${escapeHtml(x.existing_province || "")}</small></a>`
+        : `<a class="external" onclick="offerCapture('${escapeHtml(x.target_title)}')"><span>${escapeHtml(x.target_title)}</span><small>uncaptured</small></a>`
+    ).join("");
+
+    $("artMarginalia").innerHTML = `
+      ${(a.toc || []).length ? `
+        <div class="margin-block">
+          <div class="margin-label">Table of Contents</div>
+          <div class="toc">${tocHtml}</div>
+        </div>` : ""}
+      <div class="margin-block">
+        <div class="margin-label">My Marginalia</div>
+        ${margHtml || `<div class="margin-note" style="color:var(--whisper)">No notes yet.</div>`}
+        <textarea class="margin-add" id="marginAdd-${a.slug}" placeholder="Add a note in the margin…"></textarea>
+        <div class="margin-add-row"><button onclick="addMarginalia('${a.slug}')">Pin ❦</button></div>
+      </div>
+      ${xrefsHtml ? `
+        <div class="margin-block">
+          <div class="margin-label">Cross-references</div>
+          <div class="margin-related">${xrefsHtml}</div>
+        </div>` : ""}
+      <div class="margin-block">
+        <div class="margin-label">Source Integrity</div>
+        <div class="margin-note" style="font-family:var(--f-mono);font-style:normal;font-size:11px;line-height:1.6;letter-spacing:0.05em">
+          Mirror sha256:<br>
+          <span style="color:var(--oxblood);word-break:break-all">${(a.source_sha256 || "").slice(0, 14)}…${(a.source_sha256 || "").slice(-6)}</span><br>
+          Captured ${fmtAbsolute(a.captured_at)}<br>
+          CARTA signed ✓
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    toast("Could not load article: " + e.message, "err");
+    nav("");
+  }
+}
+
+function slugify(t) {
+  return (t || "").toLowerCase().replace(/&/g, "and")
+    .replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-").replace(/^-|-$/g, "") || "untitled";
+}
+
+async function addMarginalia(slug) {
+  const el = $("marginAdd-" + slug);
+  if (!el || !el.value.trim()) return;
+  try {
+    await api("/api/marginalia", {
+      method: "POST",
+      body: JSON.stringify({ article_slug: slug, content: el.value.trim(), source: "user" }),
+    });
+    toast("Pinned to the margin");
+    openArticleView(slug);
+  } catch (e) { toast("Failed: " + e.message, "err"); }
+}
+
+function offerCapture(title) {
+  openCapture();
+  $("f-topic").value = title;
+  $("f-wiki").value = title;
+}
+
+/* Open CARTA drawer and ask her to draft this topic.
+   Used when a highlighted wiki-link points to an uncaptured entry. */
+async function offerCartaCapture(title) {
+  const drawer = $("cartaDrawer");
+  const firstOpen = !drawer.classList.contains("open");
+  drawer.classList.add("open");
+  // Suppress the time-of-day greeting if we're opening with a task
+  if (firstOpen && cartaHistory.length === 0) {
+    cartaHistory.push({ role: "system", content: "opened-for-task" });
+  }
+
+  appendCartaMsg("user", `Fill out an entry for *${title}*`);
+  cartaHistory.push({ role: "user", content: `Draft an entry for "${title}"` });
+
+  $("cartaStatus").classList.add("thinking");
+  $("cartaStatus").textContent = "looking it up…";
+
+  try {
+    const d = await api("/api/carta/draft", {
+      method: "POST",
+      body: JSON.stringify({
+        description: `The user clicked a highlighted term inside an article. Draft a new entry for the topic "${title}". The Wikipedia title is almost certainly "${title}".`,
+      }),
+    });
+    const actionHtml = `
+      <div class="msg-action">
+        <strong>Drafted entry</strong>
+        <div class="msg-action-row"><span>Topic</span><span>${escapeHtml(d.topic)}</span></div>
+        <div class="msg-action-row"><span>Wikipedia</span><span>${escapeHtml(d.wikipedia_title)}</span></div>
+        <div class="msg-action-row"><span>Province</span><span>${escapeHtml(d.province)}</span></div>
+        ${d.subheading ? `<div class="msg-action-row"><span>Subheading</span><span>${escapeHtml(d.subheading)}</span></div>` : ""}
+        <div class="msg-action-buttons">
+          <button class="btn" onclick='commitDraft(${JSON.stringify(JSON.stringify(d)).replace(/'/g, "&#39;")})'>Commit to codex</button>
+        </div>
+      </div>`;
+    appendCartaMsg(
+      "carta",
+      d.confirmation || `*I shall file [[${d.topic}]] under ${d.province}.*`,
+      actionHtml
+    );
+  } catch (e) {
+    appendCartaMsg("carta", `*I could not draft this — ${e.message}*`);
+  } finally {
+    $("cartaStatus").classList.remove("thinking");
+    $("cartaStatus").textContent = "ready to chat";
+  }
+}
+
+async function refreshArticle(slug) {
+  if (!confirm("Refresh this article from Wikipedia? Content and images will be re-downloaded. Your marginalia are preserved.")) return;
+  progressStart();
+  const btn = document.activeElement;
+  try {
+    const r = await api(`/api/articles/${encodeURIComponent(slug)}/refresh`, { method: "POST" });
+    toast(`Refreshed · ${r.image_count} plates · ${r.word_count} words`);
+    openArticleView(r.slug);
+  } catch (e) {
+    toast("Refresh failed: " + e.message, "err");
+  } finally { progressEnd(); }
+}
+
+// ---------- CARTA DRAWER ----------
+function toggleCarta() {
+  const d = $("cartaDrawer");
+  d.classList.toggle("open");
+  if (d.classList.contains("open") && cartaHistory.length === 0) {
+    cartaGreet();
+  }
+}
+
+async function cartaGreet() {
+  const h = (atlasData && atlasData.stats) || { articles: 0, provinces: 0 };
+  const hour = new Date().getHours();
+  const timeWord = hour < 5 ? "late" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+  const msg = h.articles === 0
+    ? `Hey Juan! Your wiki's fresh — nothing saved yet. What've you been reading about?`
+    : hour < 5
+      ? `Hey, still up? You've got *${h.articles}* ${h.articles === 1 ? "article" : "articles"} saved. What caught your attention?`
+      : `Hey Juan, good ${timeWord}. You've got *${h.articles}* ${h.articles === 1 ? "article" : "articles"} in here. What did you read today?`;
+  appendCartaMsg("carta", msg);
+}
+
+function appendCartaMsg(from, body, action) {
+  const log = $("cartaLog");
+  const now = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const fromLabel = from === "carta" ? "Carta" : "You";
+  const safeBody = from === "user"
+    ? escapeHtml(body)
+    : parseCartaLinks(mdToSpan(escapeHtml(body)));
+  const actionHtml = action || "";
+  log.insertAdjacentHTML("beforeend", `
+    <div class="msg ${from}">
+      <div class="msg-from">${fromLabel} · ${now}</div>
+      <div class="msg-body">${safeBody}</div>
+      ${actionHtml}
+    </div>
+  `);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function sendCarta() {
+  const input = $("cartaInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ""; input.style.height = "auto";
+  $("cartaSend").disabled = true;
+  $("cartaStatus").classList.add("thinking");
+  $("cartaStatus").textContent = "thinking…";
+  appendCartaMsg("user", text);
+  cartaHistory.push({ role: "user", content: text });
+
+  try {
+    // First: try to detect "capture intent" and show a draft action card
+    const maybeCapture = /\b(just learned|just read|read about|learned about|came across|was reading|discovered|found out)\b/i.test(text);
+    const r = await api("/api/carta/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: text, history: cartaHistory }),
+    });
+    cartaHistory.push({ role: "assistant", content: r.reply });
+    appendCartaMsg("carta", r.reply);
+
+    if (maybeCapture) {
+      // Ask CARTA to draft in the background
+      draftInDrawer(text);
+    }
+  } catch (e) {
+    appendCartaMsg("carta", `*CARTA is elsewhere — ${e.message}*`);
+  } finally {
+    $("cartaSend").disabled = false;
+    $("cartaStatus").classList.remove("thinking");
+    $("cartaStatus").textContent = "ready to chat";
+  }
+}
+
+async function draftInDrawer(description) {
+  try {
+    const d = await api("/api/carta/draft", {
+      method: "POST",
+      body: JSON.stringify({ description }),
+    });
+    const actionHtml = `
+      <div class="msg-action">
+        <strong>Drafted entry</strong>
+        <div class="msg-action-row"><span>Topic</span><span>${escapeHtml(d.topic)}</span></div>
+        <div class="msg-action-row"><span>Wikipedia</span><span>${escapeHtml(d.wikipedia_title)}</span></div>
+        <div class="msg-action-row"><span>Province</span><span>${escapeHtml(d.province)}</span></div>
+        ${d.subheading ? `<div class="msg-action-row"><span>Subheading</span><span>${escapeHtml(d.subheading)}</span></div>` : ""}
+        <div class="msg-action-buttons">
+          <button class="btn" onclick='commitDraft(${JSON.stringify(JSON.stringify(d)).replace(/'/g, "&#39;")})'>Commit to codex</button>
+        </div>
+      </div>`;
+    appendCartaMsg("carta", d.confirmation || "I have drafted this entry.", actionHtml);
+  } catch (e) {
+    appendCartaMsg("carta", `*Could not draft — ${e.message}*`);
+  }
+}
+
+async function commitDraft(jsonStr) {
+  try {
+    const d = JSON.parse(jsonStr);
+    $("cartaStatus").classList.add("thinking");
+    $("cartaStatus").textContent = "pulling the article…";
+    progressStart();
+    const res = await api("/api/capture", {
+      method: "POST",
+      body: JSON.stringify({
+        topic: d.topic,
+        wikipedia_title: d.wikipedia_title,
+        province: d.province,
+        subheading: d.subheading || null,
+      }),
+    });
+    appendCartaMsg("carta", `*Committed.* '${res.title}' is now in the codex — ${res.word_count} words, ${res.image_count} plates. I have placed it on the shelf; add your marginalia when you are ready.`);
+    loadAtlas();
+    setTimeout(() => nav(`article/${res.slug}`), 600);
+  } catch (e) {
+    appendCartaMsg("carta", `*I could not commit — ${e.message}*`);
+  } finally {
+    $("cartaStatus").classList.remove("thinking");
+    $("cartaStatus").textContent = "ready to chat";
+    progressEnd();
+  }
+}
+
+$("cartaInput").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 140) + "px";
+});
+$("cartaInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCarta(); }
+});
+
+// Delegate clicks on [[Title]] links inside CARTA chat
+$("cartaLog").addEventListener("click", (ev) => {
+  const a = ev.target.closest(".chat-link");
+  if (!a) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const slug = a.getAttribute("data-slug");
+  const raw = a.getAttribute("data-title") || a.textContent;
+  const title = new DOMParser().parseFromString(raw, "text/html").body.textContent;
+  chatLinkClick(slug, title);
+});
+
+// ---------- CAPTURE ----------
+function openCapture() { $("captureModal").classList.add("open"); setTimeout(() => $("f-topic").focus(), 80); }
+function closeCapture() { $("captureModal").classList.remove("open"); $("draftPreview").classList.remove("open"); }
+function switchMode(mode) {
+  $("modeForm").classList.toggle("active", mode === "form");
+  $("modeCarta").classList.toggle("active", mode === "carta");
+  $("panelForm").classList.toggle("inactive", mode !== "form");
+  $("panelCarta").classList.toggle("active", mode === "carta");
+}
+
+async function submitCapture(e) {
+  e.preventDefault();
+  const btn = $("formSubmitBtn");
+  btn.disabled = true; btn.textContent = "Fetching…";
+  progressStart();
+  try {
+    const res = await api("/api/capture", {
+      method: "POST",
+      body: JSON.stringify({
+        topic: $("f-topic").value.trim(),
+        wikipedia_title: $("f-wiki").value.trim() || null,
+        province: $("f-province").value.trim() || null,
+        subheading: $("f-subheading").value.trim() || null,
+        opening_marginalia: $("f-marg").value.trim() || null,
+      }),
+    });
+    toast(`Captured '${res.title}' — ${res.image_count} plates, ${res.word_count} words`);
+    closeCapture();
+    await loadAtlas();
+    nav(`article/${res.slug}`);
+    // clear form
+    ["f-topic","f-wiki","f-province","f-subheading","f-marg"].forEach(id => $(id).value = "");
+  } catch (err) {
+    toast("Capture failed: " + err.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `Commit · <span style="color:var(--gilt-soft)">✦</span>`;
+    progressEnd();
+  }
+}
+
+async function dictateDraft() {
+  const desc = $("d-desc").value.trim();
+  if (!desc) { toast("Tell CARTA something first", "err"); return; }
+  const btn = $("dictateBtn");
+
+  // If we have a draft already, this is the "commit" click
+  if (lastDraft) {
+    btn.disabled = true; btn.textContent = "Committing…";
+    progressStart();
+    try {
+      const res = await api("/api/capture", {
+        method: "POST",
+        body: JSON.stringify({
+          topic: lastDraft.topic,
+          wikipedia_title: lastDraft.wikipedia_title,
+          province: lastDraft.province,
+          subheading: lastDraft.subheading || null,
+          opening_marginalia: desc,
+        }),
+      });
+      toast(`Captured '${res.title}'`);
+      closeCapture();
+      lastDraft = null;
+      $("d-desc").value = "";
+      await loadAtlas();
+      nav(`article/${res.slug}`);
+    } catch (err) {
+      toast("Capture failed: " + err.message, "err");
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = `Let CARTA proceed · <span style="color:var(--gilt-soft)">✦</span>`;
+      progressEnd();
+    }
+    return;
+  }
+
+  // Otherwise: ask CARTA to draft
+  btn.disabled = true; btn.textContent = "CARTA is thinking…";
+  try {
+    const d = await api("/api/carta/draft", {
+      method: "POST",
+      body: JSON.stringify({ description: desc }),
+    });
+    lastDraft = d;
+    $("draftMeta").innerHTML = `
+      <div class="draft-row"><dt>Topic</dt><dd>${escapeHtml(d.topic)}</dd></div>
+      <div class="draft-row"><dt>Wikipedia</dt><dd><em>${escapeHtml(d.wikipedia_title)}</em></dd></div>
+      <div class="draft-row"><dt>Province</dt><dd>${escapeHtml(d.province)}</dd></div>
+      ${d.subheading ? `<div class="draft-row"><dt>Subheading</dt><dd>${escapeHtml(d.subheading)}</dd></div>` : ""}`;
+    $("draftConfirm").textContent = d.confirmation || "Very well — I shall fetch the article and file it as instructed.";
+    $("draftPreview").classList.add("open");
+    btn.innerHTML = `Commit draft · <span style="color:var(--gilt-soft)">✦</span>`;
+    btn.disabled = false;
+  } catch (err) {
+    toast("CARTA could not draft: " + err.message, "err");
+    btn.innerHTML = `Let CARTA proceed · <span style="color:var(--gilt-soft)">✦</span>`;
+    btn.disabled = false;
+  }
+}
+
+// ---------- SEARCH ----------
+let searchDebounce = null;
+function openSearch() {
+  $("searchPalette").classList.add("open");
+  setTimeout(() => $("searchInput").focus(), 50);
+}
+function closeSearch() { $("searchPalette").classList.remove("open"); $("searchInput").value = ""; }
+
+$("searchInput").addEventListener("input", (e) => {
+  clearTimeout(searchDebounce);
+  const q = e.target.value.trim();
+  if (q.length < 2) {
+    $("searchResults").innerHTML = `<div class="search-empty">Begin typing to search the codex.</div>`;
+    return;
+  }
+  searchDebounce = setTimeout(async () => {
+    try {
+      const r = await api("/api/search?q=" + encodeURIComponent(q));
+      const hasResults = r.articles.length || r.marginalia.length || r.provinces.length;
+      if (!hasResults) {
+        $("searchResults").innerHTML = `
+          <div class="search-empty">
+            No entry for <em>"${escapeHtml(q)}"</em> yet.<br>
+            <button class="btn btn-seal" style="margin-top:14px" onclick="closeSearch();offerCapture('${escapeHtml(q)}')">Capture it</button>
+          </div>`;
+        return;
+      }
+      let html = "";
+      if (r.articles.length) {
+        html += `<div class="search-group">Articles</div>`;
+        html += r.articles.map(a => `
+          <div class="search-result" onclick="closeSearch();nav('article/${a.slug}')">
+            <span class="search-result-title">${escapeHtml(a.title)}</span>
+            <span class="search-result-meta">${escapeHtml(a.province_name || "—")}</span>
+          </div>`).join("");
+      }
+      if (r.provinces.length) {
+        html += `<div class="search-group">Provinces</div>`;
+        html += r.provinces.map(p => `
+          <div class="search-result" onclick="closeSearch();nav('province/${p.slug}')">
+            <span class="search-result-title">${escapeHtml(p.name)}</span>
+            <span class="search-result-meta">Province</span>
+          </div>`).join("");
+      }
+      if (r.marginalia.length) {
+        html += `<div class="search-group">Marginalia</div>`;
+        html += r.marginalia.map(m => `
+          <div class="search-result" onclick="closeSearch();nav('article/${m.slug}')">
+            <span class="search-result-title" style="font-style:italic">"${escapeHtml(m.content.slice(0, 90))}"</span>
+            <span class="search-result-meta">in · ${escapeHtml(m.title)}</span>
+          </div>`).join("");
+      }
+      $("searchResults").innerHTML = html;
+    } catch (err) {
+      $("searchResults").innerHTML = `<div class="search-empty">Search failed: ${err.message}</div>`;
+    }
+  }, 180);
+});
+
+// ---------- HEALTH ----------
+async function checkOllama() {
+  try {
+    const h = await api("/healthz", { timeout: 4000 });
+    const dot = $("ollamaDot");
+    const status = $("ollamaStatus");
+    if (h.ollama && h.model_present) {
+      dot.className = "ollama-dot on";
+      status.textContent = `${h.model} · ready`;
+      $("cartaStatus").textContent = "ready to chat";
+      $("cartaStatus").classList.remove("offline");
+    } else if (h.ollama) {
+      dot.className = "ollama-dot off";
+      status.textContent = `Ollama ok · ${h.model} missing`;
+    } else {
+      dot.className = "ollama-dot off";
+      status.textContent = "Ollama offline";
+      $("cartaStatus").textContent = "offline · llama isn't running";
+      $("cartaStatus").classList.add("offline");
+    }
+    $("cartaModel").textContent = h.model || "llama";
+  } catch {
+    $("ollamaDot").className = "ollama-dot off";
+    $("ollamaStatus").textContent = "Offline";
+  }
+}
+
+// ---------- SHORTCUTS ----------
+document.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === "k") { e.preventDefault(); openSearch(); }
+  if (mod && e.key === "j") { e.preventDefault(); toggleCarta(); }
+  if (mod && e.key === "n") { e.preventDefault(); openCapture(); }
+  if (e.key === "Escape") { closeSearch(); closeCapture(); }
+});
+
+// Click-outside
+$("captureModal").addEventListener("click", (e) => { if (e.target.id === "captureModal") closeCapture(); });
+$("searchPalette").addEventListener("click", (e) => { if (e.target.id === "searchPalette") closeSearch(); });
+
+// ---------- LOGIN ----------
+function showLogin(msg) {
+  const mEl = $("loginMsg");
+  if (msg) { mEl.textContent = msg; mEl.classList.add("show"); }
+  else mEl.classList.remove("show");
+  $("loginBase").value = CARTA.base || "";
+  $("loginKey").value = CARTA.key || "";
+  $("loginScreen").classList.add("open");
+  hideLoader();
+  setTimeout(() => $("loginBase").focus(), 120);
+}
+
+function saveLogin(ev) {
+  ev.preventDefault();
+  cartaSaveConfig($("loginBase").value.trim(), $("loginKey").value.trim());
+  location.reload();
+}
+
+async function quickHealth() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const headers = CARTA.key ? { "Authorization": "Bearer " + CARTA.key } : {};
+    const r = await fetch(cartaUrl("/healthz"), { signal: ctrl.signal, headers });
+    clearTimeout(timer);
+    return r;
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+// ---------- BOOT ----------
+function hideLoader() {
+  const el = $("pageLoading");
+  if (!el) return;
+  el.classList.add("hide");
+  setTimeout(() => { el.style.display = "none"; }, 600);
+}
+
+// Hard cap: no matter what, the loader hides after 6s so the user never sees a stuck spinner
+const LOADER_KILL = setTimeout(hideLoader, 6000);
+
+const SAME_ORIGIN_HOSTS = new Set(["localhost", "127.0.0.1"]);
+function onSameOriginAsPi() {
+  // Running from the Pi directly (local dev)? Then relative URLs are fine with no key.
+  const h = window.location.hostname;
+  return SAME_ORIGIN_HOSTS.has(h) || /^(10|192\.168|100)\./.test(h);
+}
+
+(async function boot() {
+  try {
+    // If we've never been configured AND we're on a remote host (Netlify), prompt first.
+    if (!CARTA.base && !onSameOriginAsPi()) {
+      showLogin("Tell CARTA where to find your Pi.");
+      return;
+    }
+    // Probe the backend
+    const r = await quickHealth();
+    if (r === null) {
+      if (!onSameOriginAsPi()) {
+        showLogin("Couldn't reach the Pi at that URL. Double-check and try again.");
+        return;
+      }
+    } else if (r.status === 401) {
+      showLogin("Your API key is missing or invalid.");
+      return;
+    }
+    await Promise.allSettled([loadAtlas(), checkOllama()]);
+    handleRoute();
+  } catch (e) {
+    console.error("Boot error", e);
+  } finally {
+    clearTimeout(LOADER_KILL);
+    hideLoader();
+  }
+})();
+
+// Re-check Ollama every 30s
+setInterval(checkOllama, 30000);
+
+// Close confirm dialog on click outside
+$("confirmDialog").addEventListener("click", (e) => {
+  if (e.target.id === "confirmDialog") {
+    $("confirmDialog").classList.remove("open");
+    $("confirmNo").click();
+  }
+});
+</script>
+
+</body>
+</html>
