@@ -10,7 +10,15 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+  /* ============ THEMES ============
+     data-theme on <html> swaps these custom properties.
+     Default = parchment (no attribute or data-theme="parchment").      */
   :root {
+    --f-display: "Fraunces", "Times New Roman", serif;
+    --f-body:    "EB Garamond", "Georgia", serif;
+    --f-mono:    "IBM Plex Mono", "Courier New", monospace;
+
+    /* Parchment — light cream + oxblood (default) */
     --parchment:    #f1e8d3;
     --parchment-2:  #ebdfc2;
     --parchment-3:  #e2d3af;
@@ -28,9 +36,97 @@
     --hairline:     rgba(26, 20, 16, 0.08);
     --shadow-page:  0 1px 0 rgba(26,20,16,0.04), 0 12px 40px -20px rgba(77,20,20,0.18);
 
-    --f-display: "Fraunces", "Times New Roman", serif;
-    --f-body:    "EB Garamond", "Georgia", serif;
-    --f-mono:    "IBM Plex Mono", "Courier New", monospace;
+    --grain-blend:    multiply;
+    --grain-opacity:  0.32;
+    --vignette-color: rgba(77,20,20,0.09);
+    --bg-glow-1:      rgba(155,122,46,0.08);
+    --bg-glow-2:      rgba(122,31,31,0.06);
+    --bg-glow-3:      rgba(155,122,46,0.05);
+    --img-filter:     sepia(8%) contrast(0.96);
+  }
+
+  /* Midnight — near-black + pure white + desaturated oxblood */
+  html[data-theme="midnight"] {
+    --parchment:    #0d0d10;
+    --parchment-2:  #15151a;
+    --parchment-3:  #1d1d24;
+    --parchment-deep: #25252d;
+    --ink:          #ffffff;
+    --ink-soft:     #d6d6dc;
+    --faded:        #8c8c95;
+    --whisper:      #55555c;
+    --oxblood:      #b9635f;
+    --oxblood-deep: #8c4642;
+    --gilt:         #c7a75a;
+    --gilt-soft:    #e0c378;
+    --seal:         #b9635f;
+    --rule:         rgba(255, 255, 255, 0.18);
+    --hairline:     rgba(255, 255, 255, 0.08);
+    --shadow-page:  0 1px 0 rgba(0,0,0,0.5), 0 12px 40px -16px rgba(0,0,0,0.8);
+
+    --grain-blend:    overlay;
+    --grain-opacity:  0.18;
+    --vignette-color: rgba(0,0,0,0.45);
+    --bg-glow-1:      rgba(199,167,90,0.06);
+    --bg-glow-2:      rgba(185,99,95,0.05);
+    --bg-glow-3:      rgba(199,167,90,0.04);
+    --img-filter:     brightness(0.82) contrast(1.08);
+  }
+
+  /* Sepia — warm tan, slightly richer than parchment */
+  html[data-theme="sepia"] {
+    --parchment:    #e8d1a7;
+    --parchment-2:  #dfc699;
+    --parchment-3:  #d3b781;
+    --parchment-deep: #c7a765;
+    --ink:          #2a1e0e;
+    --ink-soft:     #4a3a22;
+    --faded:        #756043;
+    --whisper:      #a08a66;
+    --oxblood:      #8a3420;
+    --oxblood-deep: #5c2214;
+    --gilt:         #a07a2a;
+    --gilt-soft:    #c6a052;
+    --seal:         #6d2a18;
+    --rule:         rgba(42, 30, 14, 0.22);
+    --hairline:     rgba(42, 30, 14, 0.10);
+    --shadow-page:  0 1px 0 rgba(42,30,14,0.05), 0 12px 40px -20px rgba(138,52,32,0.22);
+
+    --grain-blend:    multiply;
+    --grain-opacity:  0.40;
+    --vignette-color: rgba(94,34,20,0.12);
+    --bg-glow-1:      rgba(160,122,42,0.10);
+    --bg-glow-2:      rgba(138,52,32,0.08);
+    --bg-glow-3:      rgba(160,122,42,0.06);
+    --img-filter:     sepia(18%) contrast(0.95);
+  }
+
+  /* Oxford Blue — off-white paper + navy ink */
+  html[data-theme="oxford"] {
+    --parchment:    #f2efe7;
+    --parchment-2:  #ece8dc;
+    --parchment-3:  #e2ddcd;
+    --parchment-deep: #d6d0bd;
+    --ink:          #0d1b3a;
+    --ink-soft:     #2a3a5a;
+    --faded:        #586482;
+    --whisper:      #9aa2b4;
+    --oxblood:      #16325c;     /* "oxblood" slot → deep navy accent */
+    --oxblood-deep: #0a1e40;
+    --gilt:         #a47e2c;
+    --gilt-soft:    #d0a84c;
+    --seal:         #16325c;
+    --rule:         rgba(13, 27, 58, 0.20);
+    --hairline:     rgba(13, 27, 58, 0.08);
+    --shadow-page:  0 1px 0 rgba(13,27,58,0.05), 0 12px 40px -20px rgba(13,27,58,0.22);
+
+    --grain-blend:    multiply;
+    --grain-opacity:  0.24;
+    --vignette-color: rgba(13,27,58,0.08);
+    --bg-glow-1:      rgba(164,126,44,0.06);
+    --bg-glow-2:      rgba(22,50,92,0.05);
+    --bg-glow-3:      rgba(164,126,44,0.04);
+    --img-filter:     contrast(0.98);
   }
 
   html {
@@ -47,10 +143,12 @@
     min-height: 100vh;
     position: relative;
     overflow-x: hidden;
+    background: var(--parchment);
     background-image:
-      radial-gradient(at 8% 5%,  rgba(155,122,46,0.08) 0%, transparent 42%),
-      radial-gradient(at 92% 20%, rgba(122,31,31,0.06) 0%, transparent 40%),
-      radial-gradient(at 60% 95%, rgba(155,122,46,0.05) 0%, transparent 38%);
+      radial-gradient(at 8% 5%,  var(--bg-glow-1) 0%, transparent 42%),
+      radial-gradient(at 92% 20%, var(--bg-glow-2) 0%, transparent 40%),
+      radial-gradient(at 60% 95%, var(--bg-glow-3) 0%, transparent 38%);
+    transition: background-color .3s ease;
   }
   body::before {
     content: "";
@@ -58,8 +156,8 @@
     inset: -20%;
     pointer-events: none;
     z-index: 200;
-    opacity: 0.32;
-    mix-blend-mode: multiply;
+    opacity: var(--grain-opacity);
+    mix-blend-mode: var(--grain-blend);
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1  0 0 0 0 0.08  0 0 0 0 0.06  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   }
   body::after {
@@ -68,7 +166,7 @@
     inset: 0;
     pointer-events: none;
     z-index: 199;
-    background: radial-gradient(ellipse at center, transparent 55%, rgba(77,20,20,0.09) 100%);
+    background: radial-gradient(ellipse at center, transparent 55%, var(--vignette-color) 100%);
   }
   ::selection { background: var(--oxblood); color: var(--parchment); }
   a { color: inherit; text-decoration: none; }
@@ -442,7 +540,7 @@
   }
   .featured-image img {
     width: 100%; height: 100%; object-fit: cover; display: block;
-    filter: sepia(8%) contrast(0.96);
+    filter: var(--img-filter);
   }
   .featured-caption {
     position: absolute;
@@ -922,7 +1020,7 @@
     margin-bottom: 4px;
     box-shadow: var(--shadow-page);
   }
-  .province-card-img img { width: 100%; height: 100%; object-fit: cover; filter: sepia(6%) contrast(0.96); }
+  .province-card-img img { width: 100%; height: 100%; object-fit: cover; filter: var(--img-filter); }
   .province-card-meta {
     font-family: var(--f-mono);
     font-size: 9px;
@@ -1590,6 +1688,420 @@
     .login-card h1 { font-size: 38px; }
   }
 
+  /* =============== SETTINGS MODAL =============== */
+  .settings-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 95;
+    display: none;
+    place-items: center;
+    padding: 40px 20px;
+    backdrop-filter: blur(4px);
+  }
+  .settings-modal.open { display: grid; }
+  .settings-dialog {
+    width: 100%;
+    max-width: 640px;
+    max-height: 90vh;
+    background: var(--parchment);
+    border: 1px solid var(--ink);
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.5);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    overflow: hidden;
+    position: relative;
+  }
+  .settings-dialog::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 4px;
+    background: linear-gradient(to right, var(--oxblood), var(--gilt), var(--oxblood));
+  }
+  .settings-head {
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+  }
+  .settings-head h2 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 400;
+    font-size: 32px;
+    letter-spacing: -0.01em;
+  }
+  .settings-head h2 em { font-style: italic; color: var(--oxblood); }
+  .settings-head p {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-top: 6px;
+  }
+  .settings-body {
+    padding: 24px 32px 20px;
+    overflow-y: auto;
+  }
+  .settings-section { padding: 18px 0; border-bottom: 1px dashed var(--hairline); }
+  .settings-section:last-child { border-bottom: 0; }
+  .settings-section h3 {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 14px;
+  }
+  .settings-field {
+    display: grid;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .settings-field label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .settings-field input,
+  .settings-field select {
+    font-family: var(--f-body);
+    font-size: 16px;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 6px 0;
+    outline: none;
+  }
+  .settings-field input:focus,
+  .settings-field select:focus { border-bottom-color: var(--oxblood); }
+  .settings-actions {
+    padding: 18px 32px 24px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    background: var(--parchment-2);
+  }
+  .settings-actions .btn { padding: 12px 20px; min-height: 44px; }
+
+  /* Theme swatches */
+  .theme-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .theme-swatch {
+    cursor: pointer;
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--rule);
+    background: var(--theme-swatch-bg);
+    color: var(--theme-swatch-ink);
+    transition: border-color .15s;
+  }
+  .theme-swatch:hover { border-color: var(--ink); }
+  .theme-swatch.active {
+    border-color: var(--oxblood);
+    box-shadow: inset 0 0 0 1px var(--oxblood);
+  }
+  .theme-swatch .preview {
+    aspect-ratio: 2 / 1;
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 4px;
+  }
+  .theme-swatch .preview span:first-child { background: var(--theme-swatch-ink); opacity: 0.85; }
+  .theme-swatch .preview span:last-child  { background: var(--theme-swatch-accent); }
+  .theme-swatch .name {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .theme-swatch[data-opt="parchment"] { --theme-swatch-bg: #f1e8d3; --theme-swatch-ink: #1a1410; --theme-swatch-accent: #7a1f1f; }
+  .theme-swatch[data-opt="midnight"]  { --theme-swatch-bg: #0d0d10; --theme-swatch-ink: #ffffff; --theme-swatch-accent: #b9635f; }
+  .theme-swatch[data-opt="sepia"]     { --theme-swatch-bg: #e8d1a7; --theme-swatch-ink: #2a1e0e; --theme-swatch-accent: #8a3420; }
+  .theme-swatch[data-opt="oxford"]    { --theme-swatch-bg: #f2efe7; --theme-swatch-ink: #0d1b3a; --theme-swatch-accent: #16325c; }
+
+  /* Engine picker */
+  .engine-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    border: 1px solid var(--rule);
+    margin-bottom: 14px;
+  }
+  .engine-toggle button {
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faded);
+    cursor: pointer;
+    border-right: 1px solid var(--rule);
+    min-height: 44px;
+  }
+  .engine-toggle button:last-child { border-right: 0; }
+  .engine-toggle button.active { background: var(--ink); color: var(--parchment); }
+  .engine-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .engine-note {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--faded);
+    margin-top: 6px;
+  }
+  .engine-note em { color: var(--oxblood); font-style: italic; }
+
+  @media (max-width: 560px) {
+    .settings-dialog { max-height: 95vh; }
+    .theme-grid { grid-template-columns: repeat(2, 1fr); }
+    .settings-head h2 { font-size: 26px; }
+  }
+
+  /* =============== QUIZ VIEW =============== */
+  .quiz-view {
+    display: none;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 48px 0 80px;
+  }
+  body.view-quiz .quiz-view { display: block; }
+  body.view-quiz .view-home { display: none; }
+
+  .quiz-hero {
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 32px 0;
+    margin-bottom: 32px;
+  }
+  .quiz-hero h1 {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 30;
+    font-weight: 300;
+    font-size: clamp(40px, 6vw, 64px);
+    line-height: 0.95;
+    letter-spacing: -0.025em;
+    margin: 10px 0 14px;
+  }
+  .quiz-hero h1 em { font-style: italic; color: var(--oxblood); }
+  .quiz-hero p {
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 19px;
+    color: var(--ink-soft);
+    max-width: 640px;
+  }
+
+  .quiz-start {
+    display: grid;
+    gap: 20px;
+    max-width: 520px;
+  }
+  .quiz-start label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .quiz-start select,
+  .quiz-start input[type="number"] {
+    font-family: var(--f-body);
+    font-size: 17px;
+    color: var(--ink);
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 8px 0;
+    outline: none;
+    width: 100%;
+  }
+  .quiz-start select:focus,
+  .quiz-start input[type="number"]:focus { border-bottom-color: var(--oxblood); }
+  .quiz-start .begin {
+    margin-top: 14px;
+    padding: 14px 28px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    min-height: 52px;
+    justify-self: start;
+  }
+  .quiz-start .begin:hover { background: var(--oxblood-deep); }
+  .quiz-start .begin:disabled { background: var(--whisper); cursor: not-allowed; }
+
+  .quiz-progress {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-bottom: 24px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .quiz-progress .bar {
+    width: 60%;
+    height: 2px;
+    background: var(--hairline);
+    position: relative;
+    align-self: center;
+  }
+  .quiz-progress .bar::after {
+    content: "";
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: var(--progress, 0%);
+    background: var(--oxblood);
+    transition: width .3s;
+  }
+
+  .quiz-question {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144, "SOFT" 20;
+    font-weight: 400;
+    font-size: clamp(28px, 4vw, 42px);
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    margin-bottom: 32px;
+    text-wrap: balance;
+  }
+
+  .quiz-options {
+    display: grid;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .quiz-option {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 18px 22px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    font-family: var(--f-body);
+    font-size: 18px;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    transition: all .2s;
+    min-height: 60px;
+  }
+  .quiz-option:hover:not(:disabled) {
+    background: rgba(155,122,46,0.07);
+    border-color: var(--ink);
+  }
+  .quiz-option .marker {
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: var(--faded);
+    width: 20px;
+    flex-shrink: 0;
+  }
+  .quiz-option.correct {
+    background: rgba(155,122,46,0.18);
+    border-color: var(--gilt);
+    color: var(--ink);
+  }
+  .quiz-option.correct .marker { color: var(--gilt); }
+  .quiz-option.wrong {
+    background: rgba(122,31,31,0.12);
+    border-color: var(--oxblood);
+    color: var(--ink);
+    text-decoration: line-through;
+    text-decoration-color: var(--oxblood);
+  }
+  .quiz-option.wrong .marker { color: var(--oxblood); }
+  .quiz-option:disabled { cursor: default; }
+
+  .quiz-explain {
+    padding: 16px 18px;
+    border-left: 2px solid var(--oxblood);
+    background: rgba(155,122,46,0.05);
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin-bottom: 28px;
+    display: none;
+  }
+  .quiz-explain.show { display: block; }
+
+  .quiz-next {
+    padding: 14px 28px;
+    background: var(--ink);
+    color: var(--parchment);
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    min-height: 48px;
+    display: none;
+  }
+  .quiz-next.show { display: inline-block; }
+  .quiz-next:hover { background: var(--oxblood); }
+
+  .quiz-final {
+    text-align: center;
+    padding: 60px 20px;
+  }
+  .quiz-final .score {
+    font-family: var(--f-display);
+    font-variation-settings: "opsz" 144;
+    font-weight: 300;
+    font-size: clamp(72px, 14vw, 160px);
+    line-height: 1;
+    color: var(--ink);
+    letter-spacing: -0.04em;
+  }
+  .quiz-final .score em { font-style: italic; color: var(--oxblood); }
+  .quiz-final .grade {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--faded);
+    margin-top: 12px;
+  }
+  .quiz-final .actions {
+    margin-top: 36px;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 720px) {
+    .quiz-view { padding: 24px 0 60px; }
+    .quiz-option { font-size: 16px; padding: 14px 16px; }
+    .quiz-question { font-size: 24px; }
+  }
+
   /* =============== CONFIRM DIALOG =============== */
   .confirm-dialog {
     position: fixed;
@@ -2041,7 +2553,9 @@
     <a class="active" id="navAtlas" onclick="nav('')">Atlas</a>
     <a onclick="scrollToSection('provinces')">Provinces</a>
     <a onclick="scrollToSection('recent')">Recent</a>
+    <a onclick="nav('quiz')">Quiz</a>
     <a onclick="openCapture()">Capture</a>
+    <a onclick="openSettings()">Settings</a>
   </nav>
 
   <div class="controls">
@@ -2186,6 +2700,127 @@
     </div>
   </div>
 </aside>
+
+<!-- ============ QUIZ VIEW ============ -->
+<div class="quiz-view" id="quizView">
+  <div class="breadcrumb">
+    <a onclick="nav('')">The Codex</a>
+    <span class="sep">/</span>
+    <span style="color:var(--ink)">Quiz</span>
+  </div>
+
+  <section class="quiz-hero">
+    <div class="folio"><span class="folio-num">Folio V</span> — Test Thyself</div>
+    <h1>A <em>quiz</em> from what I've learned.</h1>
+    <p>CARTA reads one of your articles and writes four-choice questions about it. Pick an entry or let her choose at random.</p>
+  </section>
+
+  <!-- Start state -->
+  <div class="quiz-start" id="quizStart">
+    <div>
+      <label>Article</label>
+      <select id="quizSlug">
+        <option value="">— Random article —</option>
+      </select>
+    </div>
+    <div>
+      <label>Number of questions</label>
+      <input type="number" id="quizCount" value="5" min="1" max="10">
+    </div>
+    <button class="begin" id="quizBegin" onclick="quizBegin()">Begin quiz · ✦</button>
+  </div>
+
+  <!-- Question state -->
+  <div id="quizQuestion" style="display:none">
+    <div class="quiz-progress">
+      <span id="quizPosLabel">Question 1 / 5</span>
+      <span class="bar" id="quizBar"></span>
+      <span id="quizScoreLabel">Score 0</span>
+    </div>
+    <h2 class="quiz-question" id="quizQText">—</h2>
+    <div class="quiz-options" id="quizOptions"></div>
+    <div class="quiz-explain" id="quizExplain"></div>
+    <button class="quiz-next" id="quizNext" onclick="quizAdvance()">Next ·</button>
+  </div>
+
+  <!-- Final state -->
+  <div class="quiz-final" id="quizFinal" style="display:none">
+    <div class="score"><span id="quizFinalScore">—</span> <em>/</em> <span id="quizFinalTotal">—</span></div>
+    <div class="grade" id="quizFinalGrade">—</div>
+    <p style="font-family:var(--f-body);font-style:italic;color:var(--ink-soft);margin-top:18px" id="quizFinalSource"></p>
+    <div class="actions">
+      <button class="btn" onclick="quizReset()">Another quiz</button>
+      <button class="btn btn-seal" id="quizFinalOpen">Open the article</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SETTINGS MODAL ============ -->
+<div class="settings-modal" id="settingsModal">
+  <div class="settings-dialog">
+    <div class="settings-head">
+      <div>
+        <h2><em>Settings</em></h2>
+        <p>Appearance · engine · connection</p>
+      </div>
+      <button class="carta-close" onclick="closeSettings()" style="position:static">×</button>
+    </div>
+    <div class="settings-body">
+
+      <div class="settings-section">
+        <h3>Appearance</h3>
+        <div class="theme-grid" id="themeGrid">
+          <button type="button" class="theme-swatch" data-opt="parchment" onclick="applyTheme('parchment',true)">
+            <div class="preview"><span></span><span></span></div>
+            <div class="name">Parchment</div>
+          </button>
+          <button type="button" class="theme-swatch" data-opt="midnight" onclick="applyTheme('midnight',true)">
+            <div class="preview"><span></span><span></span></div>
+            <div class="name">Midnight</div>
+          </button>
+          <button type="button" class="theme-swatch" data-opt="sepia" onclick="applyTheme('sepia',true)">
+            <div class="preview"><span></span><span></span></div>
+            <div class="name">Sepia</div>
+          </button>
+          <button type="button" class="theme-swatch" data-opt="oxford" onclick="applyTheme('oxford',true)">
+            <div class="preview"><span></span><span></span></div>
+            <div class="name">Oxford</div>
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>Engine</h3>
+        <div class="engine-toggle" id="engineToggle">
+          <button type="button" id="engineLocal" onclick="setProvider('local')">Local (Pi)</button>
+          <button type="button" id="engineCloud" onclick="setProvider('cloud')">Cloud</button>
+        </div>
+        <div class="settings-field">
+          <label>Model</label>
+          <select id="modelPicker" onchange="setModel(this.value)"></select>
+        </div>
+        <p class="engine-note" id="engineNote"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3>Connection</h3>
+        <div class="settings-field">
+          <label>Backend URL</label>
+          <input id="settingsBase" type="url" autocomplete="off" spellcheck="false" placeholder="https://juanspi5.tail12345.ts.net">
+        </div>
+        <div class="settings-field">
+          <label>API key</label>
+          <input id="settingsKey" type="password" autocomplete="current-password" spellcheck="false" placeholder="CARTA_API_KEY">
+        </div>
+      </div>
+
+    </div>
+    <div class="settings-actions">
+      <button class="btn" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-seal" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
 
 <!-- ============ CAPTURE MODAL ============ -->
 <div class="capture-modal" id="captureModal">
@@ -2368,6 +3003,38 @@ function fixContentUrls(html) {
   return (html || "").replace(/(="|=')\/static\//g, `$1${CARTA.base}/static/`);
 }
 
+// Theme + LLM (provider/model) preferences
+const LLM = {
+  provider: localStorage.getItem("carta.llm_provider") || "",
+  model:    localStorage.getItem("carta.llm_model")    || "",
+};
+const THEME = {
+  current: localStorage.getItem("carta.theme") || "parchment",
+};
+let MODELS_DATA = null;   // last /api/carta/models payload
+
+// Add provider/model to a body only if set. JSON.stringify drops undefined.
+function llmBody(extra) {
+  return Object.assign({}, extra, {
+    provider: LLM.provider || undefined,
+    model:    LLM.model    || undefined,
+  });
+}
+
+// Apply theme as early as possible to avoid a flash
+function applyTheme(name, save) {
+  const ok = ["parchment", "midnight", "sepia", "oxford"].includes(name);
+  const t = ok ? name : "parchment";
+  document.documentElement.setAttribute("data-theme", t);
+  THEME.current = t;
+  if (save) localStorage.setItem("carta.theme", t);
+  // Refresh the active state on swatches if settings is open
+  document.querySelectorAll(".theme-swatch").forEach(el => {
+    el.classList.toggle("active", el.getAttribute("data-opt") === t);
+  });
+}
+applyTheme(THEME.current, false);
+
 // State
 let atlasData = null;
 let cartaHistory = [];
@@ -2495,13 +3162,16 @@ function nav(hash) {
 
 function handleRoute() {
   const h = location.hash.replace(/^#\/?/, "");
-  document.body.classList.remove("view-article", "view-province");
+  document.body.classList.remove("view-article", "view-province", "view-quiz");
   if (h.startsWith("article/")) {
     document.body.classList.add("view-article");
     openArticleView(decodeURIComponent(h.slice(8)));
   } else if (h.startsWith("province/")) {
     document.body.classList.add("view-province");
     openProvinceView(decodeURIComponent(h.slice(9)));
+  } else if (h === "quiz" || h.startsWith("quiz")) {
+    document.body.classList.add("view-quiz");
+    openQuizView();
   } else {
     window.scrollTo({ top: 0 });
   }
@@ -2510,7 +3180,9 @@ function handleRoute() {
 window.addEventListener("hashchange", handleRoute);
 
 function scrollToSection(name) {
-  if (document.body.classList.contains("view-article") || document.body.classList.contains("view-province")) {
+  if (document.body.classList.contains("view-article")
+      || document.body.classList.contains("view-province")
+      || document.body.classList.contains("view-quiz")) {
     nav("");
     setTimeout(() => scrollToSection(name), 50);
     return;
@@ -2834,9 +3506,9 @@ async function offerCartaCapture(title) {
   try {
     const d = await api("/api/carta/draft", {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(llmBody({
         description: `The user clicked a highlighted term inside an article. Draft a new entry for the topic "${title}". The Wikipedia title is almost certainly "${title}".`,
-      }),
+      })),
     });
     const actionHtml = `
       <div class="msg-action">
@@ -2930,7 +3602,7 @@ async function sendCarta() {
     const maybeCapture = /\b(just learned|just read|read about|learned about|came across|was reading|discovered|found out)\b/i.test(text);
     const r = await api("/api/carta/chat", {
       method: "POST",
-      body: JSON.stringify({ message: text, history: cartaHistory }),
+      body: JSON.stringify(llmBody({ message: text, history: cartaHistory })),
     });
     cartaHistory.push({ role: "assistant", content: r.reply });
     appendCartaMsg("carta", r.reply);
@@ -2952,7 +3624,7 @@ async function draftInDrawer(description) {
   try {
     const d = await api("/api/carta/draft", {
       method: "POST",
-      body: JSON.stringify({ description }),
+      body: JSON.stringify(llmBody({ description })),
     });
     const actionHtml = `
       <div class="msg-action">
@@ -3100,7 +3772,7 @@ async function dictateDraft() {
   try {
     const d = await api("/api/carta/draft", {
       method: "POST",
-      body: JSON.stringify({ description: desc }),
+      body: JSON.stringify(llmBody({ description: desc })),
     });
     lastDraft = d;
     $("draftMeta").innerHTML = `
@@ -3205,18 +3877,231 @@ async function checkOllama() {
   }
 }
 
+// ---------- MODELS / ENGINE ----------
+async function loadModels() {
+  try {
+    MODELS_DATA = await api("/api/carta/models", { timeout: 5000 });
+  } catch (e) {
+    MODELS_DATA = { local: [], cloud: [], cloud_enabled: false,
+                    default_provider: "local", default_model: "" };
+  }
+  renderEnginePicker();
+  populateQuizArticleList();
+  return MODELS_DATA;
+}
+
+function renderEnginePicker() {
+  if (!MODELS_DATA) return;
+  const cloudEnabled = !!MODELS_DATA.cloud_enabled;
+  const provider = LLM.provider || MODELS_DATA.default_provider || "local";
+
+  // Toggle buttons
+  $("engineLocal").classList.toggle("active", provider === "local");
+  $("engineCloud").classList.toggle("active", provider === "cloud");
+  $("engineCloud").disabled = !cloudEnabled;
+
+  // Model dropdown — filter by current provider
+  const models = provider === "cloud" ? MODELS_DATA.cloud : MODELS_DATA.local;
+  const picker = $("modelPicker");
+  picker.innerHTML = `<option value="">— default (${escapeHtml(MODELS_DATA.default_model || "llama")}) —</option>`
+    + models.map(m => `<option value="${escapeHtml(m)}"${m === LLM.model ? " selected" : ""}>${escapeHtml(m)}</option>`).join("");
+
+  // Note
+  const note = $("engineNote");
+  if (!cloudEnabled) {
+    note.innerHTML = `<em>Cloud disabled</em> — set <code style="font-family:var(--f-mono);font-size:12px">OLLAMA_CLOUD_KEY</code> on the Pi to enable.`;
+  } else if (provider === "cloud") {
+    note.innerHTML = `Using <em>Ollama Cloud</em>. Requests leave the Pi; fast but not private.`;
+  } else {
+    note.innerHTML = `Using <em>local</em> models on the Pi. Private, slower for big jobs.`;
+  }
+}
+
+function setProvider(p) {
+  LLM.provider = p;
+  localStorage.setItem("carta.llm_provider", p);
+  // Clear model selection when switching engines
+  LLM.model = "";
+  localStorage.setItem("carta.llm_model", "");
+  renderEnginePicker();
+}
+
+function setModel(m) {
+  LLM.model = m || "";
+  localStorage.setItem("carta.llm_model", LLM.model);
+}
+
+// ---------- SETTINGS ----------
+function openSettings() {
+  // Refresh dropdowns with latest model list
+  if (!MODELS_DATA) loadModels(); else renderEnginePicker();
+  // Sync current connection values
+  $("settingsBase").value = CARTA.base || "";
+  $("settingsKey").value = CARTA.key || "";
+  // Highlight active theme
+  applyTheme(THEME.current, false);
+  $("settingsModal").classList.add("open");
+}
+function closeSettings() { $("settingsModal").classList.remove("open"); }
+function saveSettings() {
+  const newBase = $("settingsBase").value.trim();
+  const newKey = $("settingsKey").value.trim();
+  const connectionChanged = (newBase !== CARTA.base) || (newKey !== CARTA.key);
+  if (connectionChanged) {
+    cartaSaveConfig(newBase, newKey);
+    closeSettings();
+    location.reload();
+    return;
+  }
+  closeSettings();
+  toast("Settings saved");
+}
+
+// ---------- QUIZ ----------
+const Quiz = {
+  questions: [],
+  idx: 0,
+  score: 0,
+  article: null,
+  answered: false,
+};
+
+function populateQuizArticleList() {
+  if (!atlasData) return;
+  const sel = $("quizSlug");
+  if (!sel) return;
+  // Keep the random option + add every recent article
+  sel.innerHTML = '<option value="">— Random article —</option>'
+    + (atlasData.recent || []).map(r => `<option value="${escapeHtml(r.slug)}">${escapeHtml(r.title)}</option>`).join("");
+}
+
+function openQuizView() {
+  window.scrollTo({ top: 0 });
+  populateQuizArticleList();
+  // Reset to start state
+  $("quizStart").style.display = "grid";
+  $("quizQuestion").style.display = "none";
+  $("quizFinal").style.display = "none";
+}
+
+async function quizBegin() {
+  const slug = $("quizSlug").value || null;
+  const count = Math.max(1, Math.min(10, parseInt($("quizCount").value || "5", 10)));
+  const btn = $("quizBegin");
+  btn.disabled = true; btn.textContent = "CARTA is drafting questions…";
+  progressStart();
+  try {
+    const r = await api("/api/carta/quiz", {
+      method: "POST",
+      timeout: 620000,
+      body: JSON.stringify(llmBody({ slug, count })),
+    });
+    Quiz.questions = r.questions || [];
+    Quiz.article = r.article;
+    Quiz.idx = 0;
+    Quiz.score = 0;
+    if (!Quiz.questions.length) throw new Error("No questions returned");
+    $("quizStart").style.display = "none";
+    $("quizFinal").style.display = "none";
+    $("quizQuestion").style.display = "block";
+    renderQuizQuestion();
+  } catch (e) {
+    toast("Quiz failed: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Begin quiz · ✦";
+    progressEnd();
+  }
+}
+
+function renderQuizQuestion() {
+  const q = Quiz.questions[Quiz.idx];
+  if (!q) return quizFinish();
+  Quiz.answered = false;
+  const letters = ["A", "B", "C", "D"];
+  $("quizPosLabel").textContent = `Question ${Quiz.idx + 1} / ${Quiz.questions.length}`;
+  $("quizScoreLabel").textContent = `Score ${Quiz.score}`;
+  $("quizBar").style.setProperty("--progress", `${(Quiz.idx / Quiz.questions.length) * 100}%`);
+  $("quizQText").textContent = q.question;
+  $("quizOptions").innerHTML = q.options.map((o, i) => `
+    <button class="quiz-option" onclick="quizAnswer(${i})">
+      <span class="marker">${letters[i]}</span>
+      <span>${escapeHtml(o)}</span>
+    </button>
+  `).join("");
+  $("quizExplain").classList.remove("show");
+  $("quizExplain").textContent = "";
+  $("quizNext").classList.remove("show");
+  $("quizNext").textContent = Quiz.idx + 1 === Quiz.questions.length ? "See results →" : "Next →";
+}
+
+function quizAnswer(choice) {
+  if (Quiz.answered) return;
+  Quiz.answered = true;
+  const q = Quiz.questions[Quiz.idx];
+  const correct = q.answer_index;
+  if (choice === correct) Quiz.score++;
+  const opts = $("quizOptions").querySelectorAll(".quiz-option");
+  opts.forEach((btn, i) => {
+    btn.disabled = true;
+    if (i === correct) btn.classList.add("correct");
+    else if (i === choice) btn.classList.add("wrong");
+  });
+  if (q.explanation) {
+    $("quizExplain").textContent = q.explanation;
+    $("quizExplain").classList.add("show");
+  }
+  $("quizScoreLabel").textContent = `Score ${Quiz.score}`;
+  $("quizNext").classList.add("show");
+  $("quizBar").style.setProperty("--progress", `${((Quiz.idx + 1) / Quiz.questions.length) * 100}%`);
+}
+
+function quizAdvance() {
+  Quiz.idx++;
+  if (Quiz.idx >= Quiz.questions.length) return quizFinish();
+  renderQuizQuestion();
+}
+
+function quizFinish() {
+  $("quizQuestion").style.display = "none";
+  $("quizFinal").style.display = "block";
+  $("quizFinalScore").textContent = Quiz.score;
+  $("quizFinalTotal").textContent = Quiz.questions.length;
+  const pct = Math.round((Quiz.score / Quiz.questions.length) * 100);
+  const grade = pct === 100 ? "perfect"
+              : pct >= 80 ? "well read"
+              : pct >= 60 ? "solid"
+              : pct >= 40 ? "getting there"
+              : "worth a re-read";
+  $("quizFinalGrade").textContent = grade;
+  $("quizFinalSource").innerHTML = Quiz.article
+    ? `Drawn from <em>${escapeHtml(Quiz.article.title)}</em>`
+    : "";
+  $("quizFinalOpen").onclick = () => {
+    if (Quiz.article?.slug) nav(`article/${Quiz.article.slug}`);
+  };
+}
+
+function quizReset() {
+  Quiz.questions = []; Quiz.idx = 0; Quiz.score = 0; Quiz.article = null;
+  $("quizFinal").style.display = "none";
+  $("quizStart").style.display = "grid";
+}
+
 // ---------- SHORTCUTS ----------
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.key === "k") { e.preventDefault(); openSearch(); }
   if (mod && e.key === "j") { e.preventDefault(); toggleCarta(); }
   if (mod && e.key === "n") { e.preventDefault(); openCapture(); }
-  if (e.key === "Escape") { closeSearch(); closeCapture(); }
+  if (mod && e.key === ",") { e.preventDefault(); openSettings(); }
+  if (e.key === "Escape") { closeSearch(); closeCapture(); closeSettings(); }
 });
 
 // Click-outside
 $("captureModal").addEventListener("click", (e) => { if (e.target.id === "captureModal") closeCapture(); });
 $("searchPalette").addEventListener("click", (e) => { if (e.target.id === "searchPalette") closeSearch(); });
+$("settingsModal").addEventListener("click", (e) => { if (e.target.id === "settingsModal") closeSettings(); });
 
 // ---------- LOGIN ----------
 function showLogin(msg) {
@@ -3286,7 +4171,7 @@ function onSameOriginAsPi() {
       showLogin("Your API key is missing or invalid.");
       return;
     }
-    await Promise.allSettled([loadAtlas(), checkOllama()]);
+    await Promise.allSettled([loadAtlas(), checkOllama(), loadModels()]);
     handleRoute();
   } catch (e) {
     console.error("Boot error", e);
