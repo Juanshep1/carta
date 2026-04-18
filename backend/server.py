@@ -737,6 +737,23 @@ def api_article(slug: str):
               FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
              WHERE a.slug = ?
         """, (slug,)).fetchone()
+        # Fallback: a requested slug often comes from a Wikipedia link whose
+        # title redirects to a canonical article stored under a different slug
+        # (e.g. link target "Hoodoo_(spirituality)" → requested slug
+        # "hoodoo-spirituality", but the actual stored slug is "hoodoo"
+        # because that's the resolved Wikipedia title). Try matching by
+        # slugified wiki_title / title so links to redirect targets open the
+        # real article instead of 404ing and triggering a duplicate capture.
+        if not row:
+            candidates = db.execute("""
+                SELECT a.*, p.name AS province_name, p.slug AS province_slug
+                  FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
+            """).fetchall()
+            for c in candidates:
+                if (slugify(c["wiki_title"] or "") == slug
+                        or slugify(c["title"] or "") == slug):
+                    row = c
+                    break
         if not row:
             raise HTTPException(404)
         art = dict(row)

@@ -3457,6 +3457,23 @@ async function openArticleView(slug) {
       </div>
     `;
   } catch (e) {
+    // On a genuine 404 we offer to capture — the slug often came from a
+    // Wikipedia link the user clicked before that article was added. The
+    // backend already falls back to matching by wiki_title, so reaching this
+    // branch means the article really isn't in the codex yet.
+    const is404 = /\b404\b/.test(e.message || "") || /not found/i.test(e.message || "");
+    if (is404) {
+      const pretty = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const ok = await confirmDialog({
+        label: "New entry",
+        body: `<em>${escapeHtml(pretty)}</em> isn't in your wiki yet. Add it?`,
+        yes: "Yes, capture it",
+        no: "Not now",
+      });
+      if (ok) { captureAndOpen(pretty, null); return; }
+      nav("");
+      return;
+    }
     toast("Could not load article: " + e.message, "err");
     nav("");
   }
