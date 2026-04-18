@@ -1000,15 +1000,33 @@ async def api_carta_chat(req: CartaChatReq):
         "mention the Wikipedia article you'd pull from. "
         f"The wiki currently has {n_articles} {'entry' if n_articles == 1 else 'entries'}. "
     )
+    system += (
+        "\n\nMANDATORY MARKUP RULE:\n"
+        "Any specific topic, concept, person, or place you mention MUST be "
+        "wrapped in [[ double square brackets ]]. No exceptions. This turns "
+        "them into tappable links on Juan's phone.\n\n"
+        "EXAMPLES of correct output:\n"
+        "  User: I'm learning about black holes.\n"
+        "  CARTA: Oh, [[Black hole]]! Those tie into [[General relativity]] — "
+        "want me to capture it?\n\n"
+        "  User: Tell me about octopuses.\n"
+        "  CARTA: [[Octopus]] cognition is wild — they're related to [[Cephalopod]]s "
+        "and show real [[Problem solving]] behavior.\n\n"
+        "  User: Just read about Stoicism.\n"
+        "  CARTA: Nice, [[Stoicism]]! If you haven't, [[Marcus Aurelius]]' "
+        "*Meditations* is the classic entry point.\n\n"
+        "If you forget to bracket a topic, Juan can't tap it. Bracket generously.\n"
+    )
     if titles:
         system += (
-            "\n\nIMPORTANT: Juan's wiki already contains the articles listed below. "
-            "Whenever you mention ANY of these titles in your reply, wrap it in "
-            "DOUBLE SQUARE BRACKETS so he can click to open it. Example: "
-            "[[Quantum entanglement]]. Do NOT use brackets for topics that aren't on "
-            "this list.\n\nExisting articles:\n- " + "\n- ".join(titles) + "\n"
+            "\nTopics ALREADY in his wiki (bracketing these opens them):\n- "
+            + "\n- ".join(titles) + "\n"
+            "All OTHER bracketed topics become '+ capture' chips.\n"
         )
-    system += "\nKeep responses to 2–3 short sentences."
+    system += (
+        "\nKeep responses to 2–3 short sentences. "
+        "Remember: bracket every topic. Every single one."
+    )
 
     messages = [{"role": "system", "content": system}]
     for m in (req.history or [])[-8:]:
@@ -1191,6 +1209,7 @@ async def api_carta_quiz(req: QuizReq):
             })
 
     if not questions:
+        log.warning("quiz: model produced no valid questions. raw payload (first 800): %s", raw[:800])
         raise HTTPException(502, "Model returned no valid questions; try again.")
 
     return {
