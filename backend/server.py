@@ -681,6 +681,35 @@ def api_delete_article(slug: str):
     return {"ok": True}
 
 
+class MoveReq(BaseModel):
+    province: str
+
+
+@app.patch("/api/articles/{slug}")
+def api_move_article(slug: str, req: MoveReq):
+    """Reassign an article to a different canonical province. Rejects unknown
+    provinces so the static-provinces invariant holds."""
+    with get_db() as db:
+        art = db.execute("SELECT id FROM articles WHERE slug = ?", (slug,)).fetchone()
+        if not art:
+            raise HTTPException(404, f"No article '{slug}'")
+        prov = db.execute(
+            "SELECT id, name, slug FROM provinces WHERE slug = ? OR lower(name) = lower(?)",
+            (slugify(req.province), req.province),
+        ).fetchone()
+        if not prov:
+            raise HTTPException(
+                400,
+                f"'{req.province}' is not a province. Allowed: {', '.join(PROVINCE_NAMES)}",
+            )
+        db.execute(
+            "UPDATE articles SET province_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (prov["id"], art["id"]),
+        )
+        db.commit()
+    return {"slug": slug, "province_name": prov["name"], "province_slug": prov["slug"]}
+
+
 @app.post("/api/articles/{slug}/refresh")
 async def api_refresh(slug: str):
     """Re-fetch from Wikipedia. Preserves user marginalia."""
