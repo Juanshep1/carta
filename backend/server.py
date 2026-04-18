@@ -39,6 +39,19 @@ FRONTEND_HTML = BASE.parent / "frontend" / "index.html"
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+# Ollama Cloud (hosted): https://ollama.com — set OLLAMA_CLOUD_KEY to enable.
+OLLAMA_CLOUD_URL = os.environ.get("OLLAMA_CLOUD_URL", "https://ollama.com").rstrip("/")
+OLLAMA_CLOUD_KEY = os.environ.get("OLLAMA_CLOUD_KEY", "").strip()
+# Cloud-only model list (curated; kept static because /api/tags against the
+# cloud endpoint requires auth and returns the account's pulled models, not the
+# catalog). Update as Ollama publishes new cloud SKUs.
+OLLAMA_CLOUD_MODELS = [
+    "gpt-oss:20b",
+    "gpt-oss:120b",
+    "qwen3-coder:480b-cloud",
+    "deepseek-v3.1:671b-cloud",
+    "kimi-k2:1t-cloud",
+]
 USER_AGENT = os.environ.get(
     "CARTA_USER_AGENT",
     "CARTA/1.0 (personal-wiki; https://github.com/; contact: zebrosyeah@yahoo.com) python-httpx"
@@ -451,11 +464,26 @@ def extract_text(html: str) -> str:
 
 
 # ---------- Ollama ----------
+def resolve_provider(provider: Optional[str], model: Optional[str]) -> tuple[str, str, dict]:
+    """Pick (base_url, model, headers) based on a client-supplied provider/model.
+    Falls back to local Ollama when cloud is requested without a key."""
+    want_cloud = (provider or "").lower() == "cloud"
+    if want_cloud and OLLAMA_CLOUD_KEY:
+        base = OLLAMA_CLOUD_URL
+        headers = {"Authorization": f"Bearer {OLLAMA_CLOUD_KEY}"}
+        chosen = model or (OLLAMA_CLOUD_MODELS[0] if OLLAMA_CLOUD_MODELS else OLLAMA_MODEL)
+        return base, chosen, headers
+    return OLLAMA_URL, (model or OLLAMA_MODEL), {}
+
+
 async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
                       format_json: bool = False, max_tokens: int = 400,
-                      timeout: float = 180) -> str:
+                      timeout: float = 180,
+                      provider: Optional[str] = None,
+                      model: Optional[str] = None) -> str:
+    base_url, chosen_model, headers = resolve_provider(provider, model)
     payload: dict[str, Any] = {
-        "model": OLLAMA_MODEL,
+        "model": chosen_model,
         "messages": messages,
         "stream": False,
         "options": {"temperature": temperature, "num_predict": max_tokens},
@@ -463,7 +491,7 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     if format_json:
         payload["format"] = "json"
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+        r = await client.post(f"{base_url}/api/chat", json=payload, headers=headers)
         r.raise_for_status()
         data = r.json()
         reply = data.get("message", {}).get("content", "")
@@ -974,10 +1002,36 @@ def api_marginalia(req: MargReq):
     return {"ok": True}
 
 
+# ---------- /api/carta/models ----------
+@app.get("/api/carta/models")
+async def api_carta_models():
+    """List model options for the iOS/web settings picker. Local models come
+    from /api/tags on the configured Ollama host; cloud models are a curated
+    static list (only returned when OLLAMA_CLOUD_KEY is set)."""
+    result: dict[str, Any] = {
+        "local": [],
+        "cloud": OLLAMA_CLOUD_MODELS if OLLAMA_CLOUD_KEY else [],
+        "default_provider": "local",
+        "default_model": OLLAMA_MODEL,
+        "cloud_enabled": bool(OLLAMA_CLOUD_KEY),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            if r.status_code == 200:
+                result["local"] = [m.get("name", "") for m in (r.json().get("models") or [])
+                                   if m.get("name")]
+    except Exception as e:
+        log.info("models: local /api/tags unreachable: %s", e)
+    return result
+
+
 # ---------- /api/carta/chat ----------
 class CartaChatReq(BaseModel):
     message: str
     history: list[dict] = []
+    provider: Optional[str] = None  # "local" | "cloud"
+    model: Optional[str] = None
 
 
 @app.post("/api/carta/chat")
@@ -1037,7 +1091,10 @@ async def api_carta_chat(req: CartaChatReq):
     messages.append({"role": "user", "content": req.message})
 
     try:
-        reply = await ollama_chat(messages, temperature=0.75, max_tokens=260)
+        reply = await ollama_chat(
+            messages, temperature=0.75, max_tokens=260,
+            provider=req.provider, model=req.model,
+        )
     except Exception as e:
         log.error("ollama chat failed: %s", e)
         return {"reply": f"*CARTA is elsewhere — the llama process cannot be reached.*  \n`{e}`",
@@ -1053,6 +1110,8 @@ async def api_carta_chat(req: CartaChatReq):
 # ---------- /api/carta/draft ----------
 class CartaDraftReq(BaseModel):
     description: str
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 @app.post("/api/carta/draft")
@@ -1083,7 +1142,10 @@ async def api_carta_draft(req: CartaDraftReq):
         {"role": "user", "content": req.description},
     ]
     try:
-        raw = await ollama_chat(messages, temperature=0.2, format_json=True, max_tokens=400)
+        raw = await ollama_chat(
+            messages, temperature=0.2, format_json=True, max_tokens=400,
+            provider=req.provider, model=req.model,
+        )
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
 
@@ -1124,6 +1186,8 @@ async def api_carta_draft(req: CartaDraftReq):
 class QuizReq(BaseModel):
     slug: Optional[str] = None
     count: Optional[int] = 5
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 @app.post("/api/carta/quiz")
@@ -1181,6 +1245,7 @@ async def api_carta_quiz(req: QuizReq):
             temperature=0.4, format_json=True,
             max_tokens=min(1500, 200 + 250 * count),
             timeout=600,
+            provider=req.provider, model=req.model,
         )
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
