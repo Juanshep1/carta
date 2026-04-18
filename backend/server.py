@@ -64,7 +64,49 @@ PROVINCES_SEED = [
     ("Hacking & Security",          "⚷", "Offensive and defensive arts of the networked world."),
     ("Economics",                   "₿", "Incentives, scarcity, and the study of what people do."),
     ("Medicine & Body",             "☤", "The organism and its repair."),
+    ("Technology",                  "⚙", "Tools, engineering, and the systems we build."),
     ("Curiosities",                 "❦", "Things too strange for any other shelf."),
+    ("Miscellaneous",               "⁂", "Everything else that didn't fit elsewhere."),
+]
+
+# Canonical province set. The capture endpoint classifies into one of these
+# and never creates new provinces. Keep in sync with PROVINCES_SEED names.
+PROVINCE_NAMES = [p[0] for p in PROVINCES_SEED]
+
+# Keyword heuristics used when the LLM is unavailable or returns something
+# unrecognizable. Order matters — first match wins, so more specific categories
+# (Hacking & Security, Computation) come before broader ones (Natural Sciences).
+PROVINCE_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("Hacking & Security",          ["hacking", "cybersecurity", "malware", "exploit", "penetration testing",
+                                      "vulnerability", "phishing", "ransomware", "cryptanalysis"]),
+    ("Computation & Cryptography",  ["algorithm", "computer science", "programming", "software", "compiler",
+                                      "operating system", "data structure", "cryptography", "encryption",
+                                      "cipher", "hash function", "turing", "computation"]),
+    ("Technology",                  ["technology", "engineering", "invention", "device", "machine",
+                                      "gadget", "hardware", "electronics", "manufacturing", "robotics",
+                                      "automobile", "aviation", "spacecraft", "internet", "smartphone"]),
+    ("Mathematics",                 ["theorem", "mathematics", "geometry", "algebra", "calculus",
+                                      "topology", "number theory", "equation", "proof", "combinatorics"]),
+    ("Natural Sciences",            ["physics", "chemistry", "biology", "zoology", "botany", "genetics",
+                                      "ecology", "species", "organism", "molecule", "atom", "quantum",
+                                      "evolution", "ecosystem"]),
+    ("Earth & Cosmos",              ["astronomy", "planet", "galaxy", "star", "solar system", "geology",
+                                      "plate tectonics", "meteorology", "climate", "oceanography",
+                                      "volcano", "earthquake", "cosmos", "nebula", "black hole"]),
+    ("Medicine & Body",             ["medicine", "disease", "anatomy", "physiology", "surgery", "pharmacology",
+                                      "neuroscience", "virus", "bacteria", "vaccine", "cancer", "immune",
+                                      "pathology", "health"]),
+    ("Philosophy & Ethics",         ["philosophy", "ethics", "metaphysics", "epistemology", "phenomenology",
+                                      "stoicism", "existentialism", "moral", "virtue"]),
+    ("History of Ideas",            ["history", "historical", "enlightenment", "renaissance", "civilization",
+                                      "ancient", "medieval", "empire", "revolution", "dynasty", "century"]),
+    ("Languages",                   ["language", "linguistics", "grammar", "phonetics", "syntax", "etymology",
+                                      "dialect", "alphabet", "script", "translation"]),
+    ("Music & Art",                 ["music", "composer", "symphony", "opera", "painting", "sculpture",
+                                      "painter", "artist", "architecture", "film", "cinema", "poetry",
+                                      "literature", "novel", "theatre", "dance"]),
+    ("Economics",                   ["economics", "economy", "finance", "market", "inflation", "currency",
+                                      "trade", "capital", "bank", "stock", "bond", "monetary"]),
 ]
 
 # ---------- helpers ----------
@@ -90,14 +132,47 @@ def init_db() -> None:
     with get_db() as db:
         with open(BASE / "schema.sql") as f:
             db.executescript(f.read())
-        if db.execute("SELECT COUNT(*) FROM provinces").fetchone()[0] == 0:
-            for name, icon, desc in PROVINCES_SEED:
+
+        # Upsert the canonical seed so new provinces (e.g. Technology) are added
+        # even if the table already exists from a prior deploy.
+        for name, icon, desc in PROVINCES_SEED:
+            db.execute("""
+                INSERT INTO provinces (name, slug, icon, description)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(slug) DO UPDATE SET
+                    name = excluded.name, icon = excluded.icon, description = excluded.description
+            """, (name, slugify(name), icon, desc))
+
+        # Migration: any province not in the canonical set is a legacy entry
+        # (e.g. "New Orleans, Louisiana" created by the old capture code). Move
+        # its articles to Curiosities and delete the province. Provinces are
+        # static from here on — capture classifies into PROVINCE_NAMES only.
+        canonical_slugs = [slugify(n) for n in PROVINCE_NAMES]
+        placeholders = ",".join("?" * len(canonical_slugs))
+        curios = db.execute(
+            "SELECT id FROM provinces WHERE slug = 'curiosities'"
+        ).fetchone()
+        if curios:
+            stray = db.execute(
+                f"SELECT id, name FROM provinces WHERE slug NOT IN ({placeholders})",
+                canonical_slugs,
+            ).fetchall()
+            for row in stray:
                 db.execute(
-                    "INSERT INTO provinces (name, slug, icon, description) VALUES (?, ?, ?, ?)",
-                    (name, slugify(name), icon, desc),
+                    "UPDATE articles SET province_id = ? WHERE province_id = ?",
+                    (curios["id"], row["id"]),
                 )
-            db.commit()
-            log.info("Seeded %d provinces", len(PROVINCES_SEED))
+                db.execute("DELETE FROM provinces WHERE id = ?", (row["id"],))
+                log.info("migration: moved articles out of legacy province '%s' to Curiosities", row["name"])
+
+            # One-off: ensure the Hoodoo disambiguation lives in Curiosities.
+            db.execute("""
+                UPDATE articles SET province_id = ?
+                 WHERE slug = 'hoodoo' OR lower(title) = 'hoodoo'
+            """, (curios["id"],))
+
+        db.commit()
+        log.info("provinces canonicalized (%d)", len(PROVINCES_SEED))
 
 
 # ---------- Wikipedia ----------
@@ -646,6 +721,85 @@ async def api_refresh(slug: str):
     return res
 
 
+# ---------- province classification ----------
+def classify_by_keyword(*texts: str) -> Optional[str]:
+    """First-match keyword classifier over the canonical PROVINCE_NAMES."""
+    blob = " ".join(t for t in texts if t).lower()
+    if not blob:
+        return None
+    for name, keywords in PROVINCE_KEYWORDS:
+        for kw in keywords:
+            if kw in blob:
+                return name
+    return None
+
+
+async def classify_by_llm(title: str, summary: str) -> Optional[str]:
+    """Ask Ollama to pick one of PROVINCE_NAMES. Returns None on any error."""
+    options = ", ".join(PROVINCE_NAMES)
+    system = (
+        "Classify a Wikipedia topic into EXACTLY ONE of these provinces. "
+        "Respond with ONLY the province name, no punctuation, no prose.\n"
+        f"Provinces: {options}"
+    )
+    user = f"Title: {title}\nSummary: {(summary or '')[:600]}"
+    try:
+        raw = await ollama_chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.0, max_tokens=20,
+        )
+    except Exception as e:
+        log.info("classify_by_llm unavailable: %s", e)
+        return None
+    pick = (raw or "").strip().strip('"').strip("'").splitlines()[0].strip()
+    # Allow case-insensitive exact match against canonical names.
+    for name in PROVINCE_NAMES:
+        if pick.lower() == name.lower():
+            return name
+    # Loose match: pick the first canonical name that appears in the response.
+    low = pick.lower()
+    for name in PROVINCE_NAMES:
+        if name.lower() in low:
+            return name
+    return None
+
+
+async def resolve_province(
+    db: sqlite3.Connection,
+    requested: Optional[str],
+    title: str,
+    summary: str,
+) -> Optional[int]:
+    """Return the province_id for a capture, classifying if needed. Never
+    creates new provinces — unknown requests fall through to classification."""
+    # 1. Honor explicit request if it matches an existing canonical province.
+    if requested:
+        row = db.execute(
+            "SELECT id FROM provinces WHERE slug = ? OR lower(name) = lower(?)",
+            (slugify(requested), requested),
+        ).fetchone()
+        if row:
+            return row["id"]
+
+    # 2. Keyword heuristic on the article text.
+    pick = classify_by_keyword(title, summary)
+
+    # 3. Ask the local LLM if heuristics were silent.
+    if not pick:
+        pick = await classify_by_llm(title, summary)
+
+    # 4. Last resort: Miscellaneous (pure uncategorized catch-all;
+    # Curiosities is reserved for the semantically "strange" — only reached
+    # via explicit request or LLM pick).
+    if not pick:
+        pick = "Miscellaneous"
+
+    row = db.execute(
+        "SELECT id FROM provinces WHERE lower(name) = lower(?)", (pick,)
+    ).fetchone()
+    return row["id"] if row else None
+
+
 # ---------- /api/capture ----------
 class CaptureReq(BaseModel):
     topic: str
@@ -694,23 +848,13 @@ async def api_capture(req: CaptureReq):
     if not lead_filename and images:
         lead_filename = images[0]["filename"]
 
-    # Province
+    # Province — always classified into the canonical static set.
+    # Explicit req.province is honored iff it matches an existing province;
+    # otherwise we classify by keyword, then LLM, then Curiosities.
     with get_db() as db:
-        province_id = None
-        if req.province:
-            pslug = slugify(req.province)
-            p = db.execute(
-                "SELECT id FROM provinces WHERE slug = ? OR name = ?",
-                (pslug, req.province),
-            ).fetchone()
-            if p:
-                province_id = p["id"]
-            else:
-                cur = db.execute(
-                    "INSERT INTO provinces (name, slug, icon) VALUES (?, ?, '❦')",
-                    (req.province, pslug),
-                )
-                province_id = cur.lastrowid
+        province_id = await resolve_province(
+            db, req.province, resolved_title, summary.get("extract", "")
+        )
 
         cur = db.execute("""
             INSERT INTO articles (slug, title, deck, province_id, subheading,
@@ -882,8 +1026,9 @@ async def api_carta_draft(req: CartaDraftReq):
         '  "confirmation": "one friendly, casual sentence, like texting a friend — e.g. '
         '\\"Cool, I\\u2019ll pull the Wikipedia article and file it under Natural Sciences.\\""\n'
         '}\n'
-        f"Existing provinces: {', '.join(provinces)}. "
-        "If truly none fit, propose a new short province name instead."
+        f"Provinces (pick one, exactly as spelled): {', '.join(provinces)}. "
+        "These are the only allowed categories — never invent a new one. "
+        "If nothing fits, pick 'Miscellaneous'."
     )
     messages = [
         {"role": "system", "content": system},
@@ -910,7 +1055,12 @@ async def api_carta_draft(req: CartaDraftReq):
     # Normalize (coerce null / empty to sensible defaults)
     data["topic"] = (data.get("topic") or req.description[:60]).strip()
     data["wikipedia_title"] = (data.get("wikipedia_title") or data["topic"]).strip()
-    data["province"] = (data.get("province") or "Curiosities").strip()
+    suggested = (data.get("province") or "Miscellaneous").strip()
+    # Clamp to a canonical province; never leak a non-existent one to the client.
+    canonical = next((n for n in PROVINCE_NAMES if n.lower() == suggested.lower()), None)
+    if not canonical:
+        canonical = next((n for n in PROVINCE_NAMES if n.lower() in suggested.lower()), None)
+    data["province"] = canonical or "Miscellaneous"
     data["subheading"] = data.get("subheading") or None
     data["confirmation"] = (data.get("confirmation") or
                             "Very well — I shall draft the entry.").strip()
