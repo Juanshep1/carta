@@ -452,7 +452,8 @@ def extract_text(html: str) -> str:
 
 # ---------- Ollama ----------
 async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
-                      format_json: bool = False, max_tokens: int = 400) -> str:
+                      format_json: bool = False, max_tokens: int = 400,
+                      timeout: float = 180) -> str:
     payload: dict[str, Any] = {
         "model": OLLAMA_MODEL,
         "messages": messages,
@@ -461,7 +462,7 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     }
     if format_json:
         payload["format"] = "json"
-    async with httpx.AsyncClient(timeout=180) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
         r.raise_for_status()
         data = r.json()
@@ -1152,10 +1153,11 @@ async def api_carta_quiz(req: QuizReq):
                     "No articles with enough content to quiz on yet. Capture something first.",
                 )
 
-    # Trim the source text so we stay under the small local model's context.
+    # Trim the source text to stay within the local model's comfortable context.
+    # 2500 chars ≈ 600 tokens of source — leaves room for 3B models to think fast.
     body_text = extract_text(row["content_html"] or "")
     source = (row["summary"] or "") + "\n\n" + body_text
-    source = source.strip()[:4500]
+    source = source.strip()[:2500]
 
     system = (
         "You write quiz questions. Output ONLY a JSON object, no prose. Shape:\n"
@@ -1171,10 +1173,14 @@ async def api_carta_quiz(req: QuizReq):
     )
     user = f"Title: {row['title']}\n\nPassage:\n{source}"
 
+    # Quizzes are heavier — give the model up to 10 minutes and only as many
+    # tokens as count warrants (~180 per question is plenty).
     try:
         raw = await ollama_chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            temperature=0.4, format_json=True, max_tokens=1400,
+            temperature=0.4, format_json=True,
+            max_tokens=min(1500, 200 + 250 * count),
+            timeout=600,
         )
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
