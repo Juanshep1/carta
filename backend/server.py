@@ -1099,3 +1099,101 @@ async def api_carta_draft(req: CartaDraftReq):
     if resolved:
         data["wikipedia_title"] = resolved
     return data
+
+
+# ---------- /api/carta/quiz ----------
+class QuizReq(BaseModel):
+    slug: Optional[str] = None
+    count: Optional[int] = 5
+
+
+@app.post("/api/carta/quiz")
+async def api_carta_quiz(req: QuizReq):
+    """Generate a multiple-choice quiz from an article in the codex.
+    If no slug is given, picks a recent article at random. Returns
+    {article: {slug, title}, questions: [{question, options[4], answer_index, explanation}]}."""
+    count = max(1, min(int(req.count or 5), 10))
+
+    with get_db() as db:
+        if req.slug:
+            row = db.execute(
+                "SELECT slug, title, summary, content_html FROM articles WHERE slug = ?",
+                (req.slug,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, f"No article '{req.slug}'")
+        else:
+            row = db.execute("""
+                SELECT slug, title, summary, content_html FROM articles
+                  WHERE content_html IS NOT NULL AND length(content_html) > 400
+                ORDER BY RANDOM() LIMIT 1
+            """).fetchone()
+            if not row:
+                raise HTTPException(
+                    404,
+                    "No articles with enough content to quiz on yet. Capture something first.",
+                )
+
+    # Trim the source text so we stay under the small local model's context.
+    body_text = extract_text(row["content_html"] or "")
+    source = (row["summary"] or "") + "\n\n" + body_text
+    source = source.strip()[:4500]
+
+    system = (
+        "You write quiz questions. Output ONLY a JSON object, no prose. Shape:\n"
+        '{ "questions": [\n'
+        '    { "question": "...", "options": ["A", "B", "C", "D"],\n'
+        '      "answer_index": 0, "explanation": "one short sentence" }\n'
+        "  ]\n"
+        "}\n"
+        f"Write exactly {count} questions drawn STRICTLY from the passage below. "
+        "Each question: 4 plausible options, exactly one correct, answer_index in [0..3]. "
+        "Make distractors reasonable — not obviously wrong. No duplicate answers. "
+        "Keep each question under 180 characters."
+    )
+    user = f"Title: {row['title']}\n\nPassage:\n{source}"
+
+    try:
+        raw = await ollama_chat(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.4, format_json=True, max_tokens=1400,
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Ollama unavailable: {e}")
+
+    raw = (raw or "").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            raise HTTPException(502, f"Could not parse quiz: {raw[:200]}")
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError as e:
+            raise HTTPException(502, f"Invalid JSON from quiz: {e}")
+
+    questions: list[dict] = []
+    for q in (data.get("questions") or [])[:count]:
+        question = str(q.get("question") or "").strip()
+        options = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
+        try:
+            answer_index = int(q.get("answer_index", 0))
+        except (TypeError, ValueError):
+            answer_index = 0
+        explanation = str(q.get("explanation") or "").strip()
+        if question and len(options) == 4 and 0 <= answer_index < 4:
+            questions.append({
+                "question": question,
+                "options": options,
+                "answer_index": answer_index,
+                "explanation": explanation,
+            })
+
+    if not questions:
+        raise HTTPException(502, "Model returned no valid questions; try again.")
+
+    return {
+        "article": {"slug": row["slug"], "title": row["title"]},
+        "questions": questions,
+    }
