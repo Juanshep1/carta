@@ -42,15 +42,30 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
 # Ollama Cloud (hosted): https://ollama.com — set OLLAMA_CLOUD_KEY to enable.
 OLLAMA_CLOUD_URL = os.environ.get("OLLAMA_CLOUD_URL", "https://ollama.com").rstrip("/")
 OLLAMA_CLOUD_KEY = os.environ.get("OLLAMA_CLOUD_KEY", "").strip()
-# Cloud-only model list (curated; kept static because /api/tags against the
-# cloud endpoint requires auth and returns the account's pulled models, not the
-# catalog). Update as Ollama publishes new cloud SKUs.
-OLLAMA_CLOUD_MODELS = [
+# Static fallback if the live Ollama Cloud /api/tags call fails. The live list
+# is authoritative and used by default — this only kicks in when the cloud is
+# unreachable. Keep a broad, recognizable selection.
+OLLAMA_CLOUD_FALLBACK = [
     "gpt-oss:20b",
     "gpt-oss:120b",
-    "qwen3-coder:480b-cloud",
-    "deepseek-v3.1:671b-cloud",
-    "kimi-k2:1t-cloud",
+    "gemma3:4b",
+    "gemma3:12b",
+    "gemma3:27b",
+    "gemma4:31b",
+    "qwen3-coder:480b",
+    "qwen3-next:80b",
+    "qwen3-vl:235b",
+    "deepseek-v3.1:671b",
+    "deepseek-v3.2",
+    "kimi-k2:1t",
+    "kimi-k2-thinking",
+    "kimi-k2.5",
+    "glm-4.6",
+    "glm-4.7",
+    "glm-5",
+    "minimax-m2",
+    "mistral-large-3:675b",
+    "nemotron-3-super",
 ]
 USER_AGENT = os.environ.get(
     "CARTA_USER_AGENT",
@@ -1005,16 +1020,18 @@ def api_marginalia(req: MargReq):
 # ---------- /api/carta/models ----------
 @app.get("/api/carta/models")
 async def api_carta_models():
-    """List model options for the iOS/web settings picker. Local models come
-    from /api/tags on the configured Ollama host; cloud models are a curated
-    static list (only returned when OLLAMA_CLOUD_KEY is set)."""
+    """List model options for the iOS/web settings picker.
+    - local: live from the Pi's /api/tags (empty if Ollama is down).
+    - cloud: live from Ollama Cloud's /api/tags when OLLAMA_CLOUD_KEY is set;
+      falls back to OLLAMA_CLOUD_FALLBACK if that call fails."""
     result: dict[str, Any] = {
         "local": [],
-        "cloud": OLLAMA_CLOUD_MODELS if OLLAMA_CLOUD_KEY else [],
+        "cloud": [],
         "default_provider": "local",
         "default_model": OLLAMA_MODEL,
         "cloud_enabled": bool(OLLAMA_CLOUD_KEY),
     }
+
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.get(f"{OLLAMA_URL}/api/tags")
@@ -1023,6 +1040,23 @@ async def api_carta_models():
                                    if m.get("name")]
     except Exception as e:
         log.info("models: local /api/tags unreachable: %s", e)
+
+    if OLLAMA_CLOUD_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(
+                    f"{OLLAMA_CLOUD_URL}/api/tags",
+                    headers={"Authorization": f"Bearer {OLLAMA_CLOUD_KEY}"},
+                )
+                if r.status_code == 200:
+                    names = sorted({m.get("name", "") for m in (r.json().get("models") or [])
+                                    if m.get("name")})
+                    result["cloud"] = names
+        except Exception as e:
+            log.info("models: cloud /api/tags unreachable: %s", e)
+        if not result["cloud"]:
+            result["cloud"] = OLLAMA_CLOUD_FALLBACK
+
     return result
 
 
