@@ -1043,6 +1043,191 @@ async def api_refresh(slug: str):
     return res
 
 
+# ---------- /api/articles/{slug}/videos ----------
+# Companion-video surface. Free sources only:
+#   - Internet Archive (advancedsearch.php, no auth)
+#   - Wikimedia Commons (filetype:video, no auth)
+# Both return CC-licensed or public-domain material, which fits CARTA's
+# archival ethos better than YouTube and avoids any API-key/billing mess.
+
+VIDEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7   # 7 days — videos rarely churn
+VIDEO_QUERY_TIMEOUT = 10
+
+
+async def _search_internet_archive(title: str) -> list[dict]:
+    """Returns up to 3 Internet Archive movie items matching `title`."""
+    params = {
+        "q": f'title:("{title}") AND mediatype:movies',
+        "fl[]": ["identifier", "title", "description", "creator", "year"],
+        "rows": 3,
+        "page": 1,
+        "sort[]": "downloads desc",
+        "output": "json",
+    }
+    # httpx flattens repeated params when passed a list under a bracket key.
+    flat: list[tuple[str, str]] = []
+    for k, v in params.items():
+        if isinstance(v, list):
+            for item in v:
+                flat.append((k, str(item)))
+        else:
+            flat.append((k, str(v)))
+    try:
+        async with httpx.AsyncClient(
+            timeout=VIDEO_QUERY_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
+            r = await client.get("https://archive.org/advancedsearch.php", params=flat)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:
+        log.info("videos: IA search failed for '%s': %s", title, e)
+        return []
+
+    out: list[dict] = []
+    for doc in (data.get("response", {}).get("docs") or []):
+        ident = doc.get("identifier")
+        if not ident:
+            continue
+        raw_desc = doc.get("description")
+        if isinstance(raw_desc, list):
+            raw_desc = raw_desc[0] if raw_desc else ""
+        desc = re.sub(r"<[^>]+>", "", str(raw_desc or ""))[:280].strip()
+        out.append({
+            "source": "internet_archive",
+            "id": ident,
+            "title": str(doc.get("title") or ident),
+            "description": desc,
+            "creator": (doc.get("creator") if isinstance(doc.get("creator"), str)
+                        else (doc.get("creator") or [""])[0] if isinstance(doc.get("creator"), list)
+                        else ""),
+            "year": str(doc.get("year") or ""),
+            "embed_url": f"https://archive.org/embed/{ident}",
+            "page_url": f"https://archive.org/details/{ident}",
+            "thumb_url": f"https://archive.org/services/img/{ident}",
+            "attribution": "Internet Archive",
+        })
+    return out
+
+
+async def _search_commons_videos(title: str) -> list[dict]:
+    """Returns up to 2 Wikimedia Commons video files matching `title`."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=VIDEO_QUERY_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
+            # 1. Search Commons File namespace for videos matching the title.
+            r = await client.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "format": "json",
+                    "list": "search",
+                    "srsearch": f'"{title}" filetype:video',
+                    "srnamespace": 6,   # File:
+                    "srlimit": 2,
+                },
+            )
+            r.raise_for_status()
+            results = r.json().get("query", {}).get("search", [])
+            if not results:
+                return []
+
+            file_titles = [r["title"] for r in results if r.get("title", "").startswith("File:")]
+            if not file_titles:
+                return []
+
+            # 2. Resolve URLs + thumbs for those files.
+            r2 = await client.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "format": "json",
+                    "prop": "imageinfo",
+                    "iiprop": "url|mediatype|size|user",
+                    "iiurlwidth": 480,
+                    "titles": "|".join(file_titles),
+                },
+            )
+            r2.raise_for_status()
+            pages = r2.json().get("query", {}).get("pages", {}) or {}
+    except Exception as e:
+        log.info("videos: Commons search failed for '%s': %s", title, e)
+        return []
+
+    out: list[dict] = []
+    for _pid, page in pages.items():
+        info = (page.get("imageinfo") or [{}])[0]
+        url = info.get("url")
+        if not url:
+            continue
+        thumb = info.get("thumburl") or url
+        raw_title = (page.get("title") or "").removeprefix("File:")
+        out.append({
+            "source": "wikimedia_commons",
+            "id": page.get("title"),
+            "title": raw_title,
+            "description": "",
+            "creator": info.get("user") or "",
+            "year": "",
+            "embed_url": url,                       # direct .webm/.ogv/.mp4
+            "page_url": f"https://commons.wikimedia.org/wiki/{(page.get('title') or '').replace(' ', '_')}",
+            "thumb_url": thumb,
+            "attribution": "Wikimedia Commons",
+        })
+    return out
+
+
+async def _fetch_article_videos(article: dict) -> list[dict]:
+    title = article.get("title") or ""
+    ia = await _search_internet_archive(title)
+    commons = await _search_commons_videos(title)
+    # IA first (usually richer metadata), then Commons. Cap at 5.
+    return (ia + commons)[:5]
+
+
+@app.get("/api/articles/{slug}/videos")
+async def api_article_videos(slug: str, refresh: bool = False):
+    """Companion videos for an article. Results cached per-article in the
+    `article_videos` table with a 7-day TTL; pass ?refresh=true to force."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, title FROM articles WHERE slug = ?", (slug,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, f"No article '{slug}'")
+        aid = row["id"]
+
+        if not refresh:
+            cached = db.execute(
+                "SELECT payload, fetched_at FROM article_videos WHERE article_id = ?",
+                (aid,),
+            ).fetchone()
+            if cached:
+                age = db.execute(
+                    "SELECT (strftime('%s','now') - strftime('%s', ?))",
+                    (cached["fetched_at"],),
+                ).fetchone()[0]
+                try:
+                    if int(age) < VIDEO_CACHE_TTL_SECONDS:
+                        return {"slug": slug, "videos": json.loads(cached["payload"])}
+                except (TypeError, ValueError):
+                    pass
+
+    videos = await _fetch_article_videos(dict(row))
+    with get_db() as db:
+        db.execute("""
+            INSERT INTO article_videos (article_id, payload, fetched_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(article_id) DO UPDATE SET
+              payload = excluded.payload, fetched_at = CURRENT_TIMESTAMP
+        """, (aid, json.dumps(videos)))
+        db.commit()
+
+    return {"slug": slug, "videos": videos}
+
+
 # ---------- province classification ----------
 def classify_by_keyword(*texts: str) -> Optional[str]:
     """First-match keyword classifier over the canonical PROVINCE_NAMES."""

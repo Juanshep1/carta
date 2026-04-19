@@ -83,3 +83,13 @@ CREATE TABLE IF NOT EXISTS carta_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cartalog_session ON carta_log(session_id, created_at);
+
+-- Companion videos (Internet Archive, Wikimedia Commons, future: Commons-inline).
+-- Cached per article so we don't re-hit the upstream APIs on every page view.
+-- Payload is a JSON array so the shape can evolve without migrations.
+CREATE TABLE IF NOT EXISTS article_videos (
+  article_id INTEGER PRIMARY KEY,
+  payload TEXT NOT NULL,
+  fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
+);
