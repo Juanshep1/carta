@@ -392,11 +392,11 @@
     position: sticky;
     top: 0;
     z-index: 60;
-    padding: 22px 56px 18px;
+    padding: 20px 32px 16px;
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: center;
-    gap: 48px;
+    gap: 24px;
     background: linear-gradient(to bottom, var(--parchment) 85%, rgba(241,232,211,0));
     border-bottom: 1px solid var(--rule);
     backdrop-filter: blur(2px);
@@ -404,7 +404,7 @@
   .masthead::after {
     content: "";
     position: absolute;
-    left: 56px; right: 56px; bottom: -2px;
+    left: 32px; right: 32px; bottom: -2px;
     height: 1px;
     background: var(--gilt-soft);
     opacity: 0.45;
@@ -448,11 +448,17 @@
   .ollama-dot.off { background: var(--whisper); }
   @keyframes pulse { 0%,100% { opacity: .45; } 50% { opacity: 1; } }
 
-  .primary-nav { display: flex; justify-content: center; gap: 40px; }
+  .primary-nav {
+    display: flex;
+    justify-content: center;
+    gap: 22px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
   .primary-nav a {
     font-family: var(--f-mono);
     font-size: 11px;
-    letter-spacing: 0.28em;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--ink-soft);
     padding: 6px 0;
@@ -515,12 +521,12 @@
 
   /* =============== HERO =============== */
   .hero {
-    padding: 80px 0 60px;
-    max-width: 1400px;
+    padding: 72px 32px 56px;
+    max-width: 1180px;
     margin: 0 auto;
     display: grid;
-    grid-template-columns: 1fr 380px;
-    gap: 80px;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 56px;
     align-items: end;
     border-bottom: 1px solid var(--rule);
     position: relative;
@@ -537,12 +543,12 @@
     font-optical-sizing: auto;
     font-variation-settings: "opsz" 144, "SOFT" 30;
     font-weight: 300;
-    font-size: clamp(48px, 7vw, 96px);
-    line-height: 0.95;
-    letter-spacing: -0.025em;
+    font-size: clamp(44px, 5.6vw, 80px);
+    line-height: 0.98;
+    letter-spacing: -0.02em;
     color: var(--ink);
     text-wrap: balance;
-    margin: 18px 0 28px;
+    margin: 18px 0 24px;
   }
   .hero-title em {
     font-style: italic;
