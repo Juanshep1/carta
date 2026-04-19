@@ -906,6 +906,240 @@ def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
     return buf.getvalue()
 
 
+# ---------- /api/compile ----------
+# Topic → learning book. Ranks the existing corpus by keyword relevance,
+# optionally auto-captures more Wikipedia articles to hit a target size, and
+# stitches the result into an EPUB (same builder as province export) or a
+# print-ready HTML page the user can save as PDF from their browser.
+
+async def _wiki_related_titles(topic: str, limit: int = 12) -> list[str]:
+    """Fetch relevance-ranked Wikipedia titles for `topic`. No auth required."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=15, headers={"User-Agent": USER_AGENT}
+        ) as client:
+            r = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "list": "search",
+                    "srsearch": topic,
+                    "srlimit": limit,
+                    "srwhat": "text",
+                    "format": "json",
+                },
+            )
+            if r.status_code != 200:
+                return []
+            return [hit["title"] for hit in (r.json().get("query") or {}).get("search", [])]
+    except Exception as e:
+        log.info("compile: wiki related titles failed for '%s': %s", topic, e)
+        return []
+
+
+def _compile_html(topic: str, articles: list[dict]) -> str:
+    """Print-ready single HTML page that renders well on paper AND can be
+    saved as PDF via the browser's print dialog. No print-server dependency."""
+    css = """
+    @page { size: letter; margin: 0.8in; }
+    html, body { margin: 0; padding: 0; background: #f1e8d3;
+                 font-family: "EB Garamond", Georgia, serif;
+                 color: #1a1410; line-height: 1.55; }
+    .hero { text-align: center; margin: 2em 0 3em; }
+    .hero .kicker { font-family: "IBM Plex Mono", monospace;
+                    letter-spacing: 0.28em; font-size: 11px;
+                    color: #7a1f1f; text-transform: uppercase; }
+    .hero h1 { font-family: "Fraunces", Georgia, serif; font-weight: 400;
+               font-size: 44px; margin: 14px 0 6px; }
+    .hero h1 em { font-style: italic; color: #7a1f1f; }
+    .hero .count { font-style: italic; color: #6d5e47; }
+    .toc { margin: 2em 0 3em; padding: 1em 0; border-top: 1px solid #c4a35a;
+           border-bottom: 1px solid #c4a35a; }
+    .toc h2 { font-family: "Fraunces", serif; font-weight: 400; font-size: 18px;
+              letter-spacing: 0.24em; text-transform: uppercase;
+              color: #7a1f1f; margin: 0 0 14px; }
+    .toc ol { list-style: none; counter-reset: ch; padding: 0; }
+    .toc li { counter-increment: ch; padding: 4px 0;
+              display: flex; justify-content: space-between; gap: 10px; }
+    .toc li::before { content: counter(ch, upper-roman) "."; color: #9b7a2e;
+                      font-family: "Fraunces", serif; font-style: italic;
+                      min-width: 40px; }
+    .chapter { page-break-before: always; padding-top: 1em; }
+    .chapter .kicker { font-family: "IBM Plex Mono", monospace;
+                       font-size: 10px; letter-spacing: 0.22em;
+                       color: #7a1f1f; text-transform: uppercase; }
+    .chapter h1 { font-family: "Fraunces", serif; font-weight: 500;
+                  font-size: 30px; margin: 6px 0 4px; }
+    .chapter .deck { font-style: italic; color: #3a2f27; margin-bottom: 1.4em; }
+    .chapter h2 { font-family: "Fraunces", serif; font-size: 20px;
+                  font-weight: 500; border-bottom: 1px solid rgba(26,20,16,0.18);
+                  padding-bottom: 4px; margin-top: 1.8em; }
+    .chapter p { margin: 0.7em 0; }
+    .chapter a { color: #7a1f1f; text-decoration: none; }
+    .chapter blockquote { border-left: 2px solid #7a1f1f;
+                          padding: 0.4em 1em; margin: 1em 0;
+                          font-style: italic; color: #3a2f27; }
+    img { max-width: 100%; height: auto; }
+    .print-button { position: fixed; top: 16px; right: 16px;
+                    padding: 10px 18px; background: #7a1f1f; color: #f1e8d3;
+                    font-family: "IBM Plex Mono", monospace; font-size: 11px;
+                    letter-spacing: 0.22em; text-transform: uppercase;
+                    border: 0; cursor: pointer; z-index: 100; }
+    @media print { .print-button { display: none; } }
+    """
+    esc = lambda s: (str(s or "").replace("&", "&amp;")
+                     .replace("<", "&lt;").replace(">", "&gt;"))
+    toc_items = "".join(
+        f'<li><span>{esc(a.get("title") or "—")}</span>'
+        f'<span style="color:#6d5e47">{esc(a.get("province_name") or "")}</span></li>'
+        for a in articles
+    )
+    chapter_html = ""
+    for i, a in enumerate(articles, 1):
+        body = a.get("content_html") or f"<p>{esc(a.get('summary') or '')}</p>"
+        body = re.sub(r"<script[\s\S]*?</script>", "", body, flags=re.I)
+        body = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", body, flags=re.I)
+        kicker = esc(a.get("province_name") or "")
+        chapter_html += f"""
+        <section class="chapter">
+          <div class="kicker">Chapter {i}{' · ' + kicker if kicker else ''}</div>
+          <h1>{esc(a.get('title') or '')}</h1>
+          {f'<div class="deck">{esc(a.get("deck") or a.get("summary") or "")}</div>'
+           if (a.get('deck') or a.get('summary')) else ''}
+          {body}
+        </section>
+        """
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+    <title>CARTA · {esc(topic)} — Learning Book</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400..700;1,400..700&family=EB+Garamond:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>{css}</style></head><body>
+    <button class="print-button" onclick="window.print()">Save as PDF</button>
+    <div class="hero">
+      <div class="kicker">A CARTA Learning Book</div>
+      <h1><em>{esc(topic)}</em></h1>
+      <div class="count">{len(articles)} chapters · compiled from your codex</div>
+    </div>
+    <section class="toc"><h2>Contents</h2><ol>{toc_items}</ol></section>
+    {chapter_html}
+    </body></html>"""
+
+
+class CompileReq(BaseModel):
+    topic: str
+    format: str = "epub"             # "epub" | "html"
+    target_articles: int = 8
+    auto_expand: bool = True
+
+
+@app.post("/api/compile")
+async def api_compile(req: CompileReq):
+    topic = (req.topic or "").strip()
+    if not topic:
+        raise HTTPException(400, "topic is required")
+    target = max(3, min(int(req.target_articles or 8), 20))
+
+    # Rank existing corpus by topic keyword. Reuses the same heuristic the
+    # quest endpoint uses so behavior matches user expectations.
+    with get_db() as db:
+        rows = db.execute("""
+            SELECT a.id, a.slug, a.title, a.deck, a.summary, a.content_html,
+                   a.captured_at, p.name AS province_name
+              FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
+        """).fetchall()
+    corpus = [dict(r) for r in rows]
+    needles = [w for w in re.findall(r"\w{3,}", topic.lower()) if w]
+
+    def score(a: dict) -> int:
+        blob = " ".join([
+            (a.get("title") or "").lower(),
+            (a.get("summary") or "").lower(),
+            (a.get("deck") or "").lower(),
+            (a.get("province_name") or "").lower(),
+        ])
+        return sum(1 for n in needles if n in blob)
+
+    scored = sorted([(score(a), a) for a in corpus], key=lambda sa: -sa[0])
+    relevant = [a for s, a in scored if s > 0][:target]
+
+    # Auto-expand: ask Wikipedia for relevance-ranked titles we don't already
+    # have, then run them through the capture pipeline. Best-effort — each
+    # capture can take 10-30s, so we cap at `needed` new items.
+    added: list[str] = []
+    if req.auto_expand and len(relevant) < target:
+        needed = target - len(relevant)
+        existing_slugs = {a["slug"] for a in corpus}
+        existing_titles_lower = {(a.get("title") or "").lower() for a in corpus}
+        candidate_titles = await _wiki_related_titles(topic, limit=needed * 3)
+        for title in candidate_titles:
+            if len(added) >= needed:
+                break
+            if title.lower() in existing_titles_lower:
+                continue
+            try:
+                result = await api_capture(
+                    CaptureReq(topic=title, wikipedia_title=title)
+                )
+            except HTTPException as e:
+                log.info("compile: capture '%s' skipped (%d): %s",
+                         title, e.status_code, e.detail)
+                continue
+            except Exception as e:
+                log.info("compile: capture '%s' errored: %s", title, e)
+                continue
+            new_slug = result.get("slug")
+            if not new_slug or new_slug in existing_slugs:
+                continue
+            added.append(new_slug)
+            # Hydrate the newly-captured article for the compile list.
+            with get_db() as db:
+                new_row = db.execute("""
+                    SELECT a.id, a.slug, a.title, a.deck, a.summary, a.content_html,
+                           a.captured_at, p.name AS province_name
+                      FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
+                     WHERE a.slug = ?
+                """, (new_slug,)).fetchone()
+            if new_row:
+                relevant.append(dict(new_row))
+
+    if not relevant:
+        raise HTTPException(
+            409,
+            f"Nothing in the codex matches '{topic}' and auto-expand "
+            "couldn't capture anything new. Try a different topic.",
+        )
+
+    # Order chapters: introduction → deeper. For now, original relevance
+    # ranking puts the most on-topic first, which reads well as an opener.
+    filename_slug = slugify(topic) or "learning"
+
+    if (req.format or "epub").lower() == "html":
+        html = _compile_html(topic, relevant)
+        return Response(
+            content=html,
+            media_type="text/html; charset=utf-8",
+            headers={
+                "Content-Disposition": f'inline; filename="{filename_slug}-learning.html"',
+                "X-Compiled-Count": str(len(relevant)),
+                "X-Auto-Added": str(len(added)),
+            },
+        )
+
+    # EPUB branch — reuse the province exporter's builder, masquerading
+    # the topic as a virtual "province" for the titlepage.
+    virtual_province = {"name": f"Learning · {topic}"}
+    data = _epub_from_articles(virtual_province, relevant)
+    return Response(
+        content=data,
+        media_type="application/epub+zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename_slug}-learning.epub"',
+            "X-Compiled-Count": str(len(relevant)),
+            "X-Auto-Added": str(len(added)),
+        },
+    )
+
+
 @app.get("/api/provinces/{slug}/export.epub")
 def api_export_province_epub(slug: str):
     with get_db() as db:
