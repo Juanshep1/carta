@@ -1881,6 +1881,274 @@
   body.view-quiz .quiz-view { display: block; }
   body.view-quiz .view-home { display: none; }
 
+  /* ---------- QUEST ---------- */
+  .quest-view { display: none; padding: 28px 0 80px; }
+  body.view-quest .quest-view { display: block; }
+  body.view-quest .view-home { display: none; }
+
+  .quest-hero {
+    text-align: center;
+    padding: 40px 20px 28px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 28px;
+  }
+  .quest-hero h1 {
+    font-family: var(--f-display);
+    font-weight: 400;
+    font-size: clamp(30px, 5vw, 44px);
+    line-height: 1.1;
+    margin: 10px 0 6px;
+    color: var(--ink);
+  }
+  .quest-hero h1 em { font-style: italic; color: var(--oxblood); }
+  .quest-hero p {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    max-width: 520px;
+    margin: 0 auto;
+    font-size: 16px;
+  }
+
+  .quest-kickoff {
+    max-width: 540px;
+    margin: 0 auto 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .quest-kickoff label {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faded);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .quest-kickoff input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    font-family: var(--f-body);
+    font-size: 16px;
+    background: rgba(0,0,0,0.03);
+    border: none;
+    border-bottom: 1.5px solid var(--rule);
+    color: var(--ink);
+  }
+  .quest-kickoff input[type="text"]:focus {
+    outline: none;
+    border-bottom-color: var(--oxblood);
+  }
+  .quest-kickoff .begin {
+    padding: 14px 32px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: none;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    align-self: center;
+    margin-top: 4px;
+  }
+  .quest-kickoff .begin:hover { background: var(--oxblood-deep); }
+  .quest-kickoff .begin:disabled { background: var(--whisper); cursor: not-allowed; }
+
+  .quest-plan-head {
+    max-width: 720px;
+    margin: 0 auto 18px;
+    padding: 0 18px;
+  }
+  .quest-plan-head .kicker {
+    font-family: var(--f-mono);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--oxblood);
+  }
+  .quest-plan-head .topic {
+    font-family: var(--f-display);
+    font-size: 28px;
+    color: var(--ink);
+    margin-top: 4px;
+  }
+  .quest-progress-bar {
+    max-width: 720px;
+    margin: 14px auto 24px;
+    padding: 0 18px;
+  }
+  .quest-progress-bar .rail {
+    height: 4px;
+    background: rgba(0,0,0,0.08);
+    border: 1px solid var(--rule);
+    position: relative;
+    overflow: hidden;
+  }
+  .quest-progress-bar .fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0%;
+    background: var(--oxblood);
+    transition: width 0.4s ease;
+  }
+  .quest-progress-bar .label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    color: var(--faded);
+    margin-top: 6px;
+  }
+  .quest-days {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .quest-day {
+    padding: 16px 18px;
+    background: rgba(255,255,255,0.35);
+    border: 1px solid var(--rule);
+  }
+  .quest-day-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .quest-day-head h3 {
+    font-family: var(--f-display);
+    font-size: 22px;
+    color: var(--ink);
+    margin: 0;
+    font-weight: 400;
+  }
+  .quest-day-head .check {
+    font-family: var(--f-display);
+    font-size: 22px;
+    color: var(--gilt);
+  }
+  .quest-day .empty {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--whisper);
+    padding: 4px 0;
+  }
+  .quest-day .article-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule);
+    cursor: pointer;
+  }
+  .quest-day .article-row:last-child { border-bottom: none; }
+  .quest-day .article-row .box {
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--faded);
+    display: inline-block;
+    flex: 0 0 auto;
+    margin-top: 3px;
+    text-align: center;
+    line-height: 12px;
+    font-size: 12px;
+    color: transparent;
+  }
+  .quest-day .article-row.read .box {
+    border-color: var(--gilt);
+    color: var(--gilt);
+  }
+  .quest-day .article-row .title {
+    font-family: var(--f-body);
+    font-size: 15px;
+    color: var(--ink);
+    flex: 1;
+  }
+  .quest-day .article-row .prov {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--faded);
+    margin-top: 2px;
+  }
+  .quest-day .article-row .arrow {
+    color: var(--faded);
+  }
+  .quest-day .quiz-cue {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    margin-top: 8px;
+    font-size: 14px;
+  }
+  .quest-day .quiz-cue::before { content: "?  "; color: var(--oxblood); font-style: normal; }
+  .quest-day .reflection {
+    margin-top: 10px;
+  }
+  .quest-day .reflection .prompt {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+  .quest-day .reflection .prompt::before {
+    content: "REFLECTION";
+    display: block;
+    font-family: var(--f-mono);
+    font-style: normal;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: var(--oxblood);
+    margin-bottom: 2px;
+  }
+  .quest-day .reflection textarea {
+    width: 100%;
+    min-height: 70px;
+    padding: 8px;
+    font-family: var(--f-body);
+    font-style: italic;
+    font-size: 15px;
+    background: rgba(0,0,0,0.03);
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    resize: vertical;
+  }
+  .quest-day .reflection textarea:focus {
+    outline: none;
+    border-color: var(--oxblood);
+  }
+  .quest-plan-actions {
+    max-width: 720px;
+    margin: 24px auto 0;
+    padding: 0 18px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  .quest-plan-actions button {
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--oxblood);
+    border: 1px solid var(--rule);
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .quest-error {
+    max-width: 540px;
+    margin: 12px auto 0;
+    color: var(--oxblood);
+    font-family: var(--f-body);
+    font-style: italic;
+    text-align: center;
+  }
+
   .quiz-hero {
     border-top: 2px solid var(--ink);
     border-bottom: 1px solid var(--rule);
@@ -2554,6 +2822,7 @@
     <a onclick="scrollToSection('provinces')">Provinces</a>
     <a onclick="scrollToSection('recent')">Recent</a>
     <a onclick="nav('quiz')">Quiz</a>
+    <a onclick="nav('quest')">Quest</a>
     <a onclick="openCapture()">Capture</a>
     <a onclick="openSettings()">Settings</a>
   </nav>
@@ -2751,6 +3020,47 @@
     <div class="actions">
       <button class="btn" onclick="quizReset()">Another quiz</button>
       <button class="btn btn-seal" id="quizFinalOpen">Open the article</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ QUEST VIEW ============ -->
+<div class="quest-view" id="questView">
+  <div class="breadcrumb">
+    <a onclick="nav('')">The Codex</a>
+    <span class="sep">/</span>
+    <span style="color:var(--ink)">Quest</span>
+  </div>
+
+  <section class="quest-hero">
+    <div class="folio"><span class="folio-num">Folio VI</span> — Seven Days</div>
+    <h1>A <em>reading arc</em> across your codex.</h1>
+    <p>CARTA picks articles from what you've already captured, bundles them into seven days with optional quizzes and a short reflection prompt each.</p>
+  </section>
+
+  <!-- Kickoff state -->
+  <div class="quest-kickoff" id="questKickoff">
+    <div>
+      <label>Topic</label>
+      <input id="questTopic" type="text" placeholder="cryptography, octopus cognition, the Enlightenment…" autocomplete="off" spellcheck="false">
+    </div>
+    <button class="begin" id="questBegin" onclick="questBegin()">Begin quest · ✦</button>
+    <div class="quest-error" id="questError" style="display:none"></div>
+  </div>
+
+  <!-- Plan state -->
+  <div id="questPlan" style="display:none">
+    <div class="quest-plan-head">
+      <div class="kicker">Topic</div>
+      <div class="topic" id="questTopicLabel">—</div>
+    </div>
+    <div class="quest-progress-bar">
+      <div class="rail"><div class="fill" id="questFill"></div></div>
+      <div class="label" id="questProgressLabel">0 / 0 read</div>
+    </div>
+    <div class="quest-days" id="questDays"></div>
+    <div class="quest-plan-actions">
+      <button onclick="questReset()">Abandon quest</button>
     </div>
   </div>
 </div>
@@ -3162,7 +3472,7 @@ function nav(hash) {
 
 function handleRoute() {
   const h = location.hash.replace(/^#\/?/, "");
-  document.body.classList.remove("view-article", "view-province", "view-quiz");
+  document.body.classList.remove("view-article", "view-province", "view-quiz", "view-quest");
   if (h.startsWith("article/")) {
     document.body.classList.add("view-article");
     openArticleView(decodeURIComponent(h.slice(8)));
@@ -3172,6 +3482,9 @@ function handleRoute() {
   } else if (h === "quiz" || h.startsWith("quiz")) {
     document.body.classList.add("view-quiz");
     openQuizView();
+  } else if (h === "quest" || h.startsWith("quest")) {
+    document.body.classList.add("view-quest");
+    openQuestView();
   } else {
     window.scrollTo({ top: 0 });
   }
@@ -3182,7 +3495,8 @@ window.addEventListener("hashchange", handleRoute);
 function scrollToSection(name) {
   if (document.body.classList.contains("view-article")
       || document.body.classList.contains("view-province")
-      || document.body.classList.contains("view-quiz")) {
+      || document.body.classList.contains("view-quiz")
+      || document.body.classList.contains("view-quest")) {
     nav("");
     setTimeout(() => scrollToSection(name), 50);
     return;
@@ -4103,6 +4417,170 @@ function quizReset() {
   Quiz.questions = []; Quiz.idx = 0; Quiz.score = 0; Quiz.article = null;
   $("quizFinal").style.display = "none";
   $("quizStart").style.display = "grid";
+}
+
+// ---------- QUEST ----------
+const QUEST_PLAN_KEY = "carta.quest.plan";
+const QUEST_PROG_KEY = "carta.quest.progress";
+const Quest = {
+  plan: null,      // { topic, days: [...] }
+  progress: null,  // { topic, startedAt, readSlugs: [...], reflections: {day: text} }
+};
+
+function openQuestView() {
+  hydrateQuest();
+  renderQuest();
+}
+
+function hydrateQuest() {
+  try {
+    const p = localStorage.getItem(QUEST_PLAN_KEY);
+    const g = localStorage.getItem(QUEST_PROG_KEY);
+    Quest.plan = p ? JSON.parse(p) : null;
+    Quest.progress = g ? JSON.parse(g) : (Quest.plan ? {
+      topic: Quest.plan.topic, startedAt: new Date().toISOString(),
+      readSlugs: [], reflections: {},
+    } : null);
+  } catch { Quest.plan = null; Quest.progress = null; }
+}
+
+function persistQuest() {
+  if (Quest.plan)     localStorage.setItem(QUEST_PLAN_KEY, JSON.stringify(Quest.plan));
+  if (Quest.progress) localStorage.setItem(QUEST_PROG_KEY, JSON.stringify(Quest.progress));
+}
+
+async function questBegin() {
+  const topic = $("questTopic").value.trim();
+  if (!topic) return;
+  const btn = $("questBegin");
+  const err = $("questError");
+  btn.disabled = true; btn.textContent = "Designing…";
+  err.style.display = "none";
+  try {
+    const body = {
+      topic,
+      provider: localStorage.getItem("carta.llm_provider") || undefined,
+      model:    localStorage.getItem("carta.llm_model") || undefined,
+    };
+    const plan = await api("/api/carta/quest", { method: "POST", body: JSON.stringify(body) });
+    Quest.plan = plan;
+    Quest.progress = {
+      topic: plan.topic, startedAt: new Date().toISOString(),
+      readSlugs: [], reflections: {},
+    };
+    persistQuest();
+    renderQuest();
+  } catch (e) {
+    err.textContent = "Could not design quest — " + (e.message || e);
+    err.style.display = "block";
+  } finally {
+    btn.disabled = false; btn.textContent = "Begin quest · ✦";
+  }
+}
+
+function renderQuest() {
+  if (!Quest.plan) {
+    $("questKickoff").style.display = "flex";
+    $("questPlan").style.display = "none";
+    return;
+  }
+  $("questKickoff").style.display = "none";
+  $("questPlan").style.display = "block";
+  $("questTopicLabel").textContent = Quest.plan.topic;
+
+  const allSlugs = Quest.plan.days.flatMap(d => d.article_slugs || []);
+  const done = allSlugs.filter(s => (Quest.progress.readSlugs || []).includes(s)).length;
+  const pct = allSlugs.length ? (done / allSlugs.length * 100) : 0;
+  $("questFill").style.width = pct + "%";
+  $("questProgressLabel").textContent =
+    allSlugs.length ? `${done} / ${allSlugs.length} read` : "No articles assigned";
+
+  const container = $("questDays");
+  container.innerHTML = "";
+  for (const day of Quest.plan.days) {
+    const card = document.createElement("div");
+    card.className = "quest-day";
+    const slugs = day.article_slugs || [];
+    const articles = day.articles || [];
+    const readSet = new Set(Quest.progress.readSlugs || []);
+    const dayDone = slugs.length > 0 && slugs.every(s => readSet.has(s));
+
+    const head = document.createElement("div");
+    head.className = "quest-day-head";
+    head.innerHTML =
+      `<h3>Day ${day.day}</h3>` +
+      (dayDone ? `<span class="check">✓</span>` : "");
+    card.appendChild(head);
+
+    if (articles.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "— CARTA left this day open, a rest day —";
+      card.appendChild(empty);
+    } else {
+      for (const a of articles) {
+        const read = readSet.has(a.slug);
+        const row = document.createElement("div");
+        row.className = "article-row" + (read ? " read" : "");
+        row.innerHTML = `
+          <span class="box">✓</span>
+          <div style="flex:1">
+            <div class="title">${escapeHtml(a.title)}</div>
+            ${a.province_name ? `<div class="prov">${escapeHtml(a.province_name)}</div>` : ""}
+          </div>
+          <span class="arrow">→</span>`;
+        row.addEventListener("click", () => {
+          questMarkRead(a.slug);
+          nav(`article/${a.slug}`);
+        });
+        card.appendChild(row);
+      }
+    }
+
+    if (day.quiz_count > 0) {
+      const cue = document.createElement("div");
+      cue.className = "quiz-cue";
+      cue.textContent = `Quiz yourself — ${day.quiz_count} question${day.quiz_count === 1 ? "" : "s"}`;
+      card.appendChild(cue);
+    }
+
+    if (day.reflection) {
+      const wrap = document.createElement("div");
+      wrap.className = "reflection";
+      const prompt = document.createElement("div");
+      prompt.className = "prompt";
+      prompt.textContent = day.reflection;
+      wrap.appendChild(prompt);
+      const ta = document.createElement("textarea");
+      ta.placeholder = "Write a line or two…";
+      ta.value = (Quest.progress.reflections || {})[day.day] || "";
+      ta.addEventListener("input", () => {
+        Quest.progress.reflections = Quest.progress.reflections || {};
+        Quest.progress.reflections[day.day] = ta.value;
+        persistQuest();
+      });
+      wrap.appendChild(ta);
+      card.appendChild(wrap);
+    }
+
+    container.appendChild(card);
+  }
+}
+
+function questMarkRead(slug) {
+  if (!Quest.progress) return;
+  Quest.progress.readSlugs = Array.from(new Set([...(Quest.progress.readSlugs || []), slug]));
+  persistQuest();
+  renderQuest();
+}
+
+function questReset() {
+  if (!confirm("Abandon this quest? Your reflections for it will be erased.")) return;
+  Quest.plan = null; Quest.progress = null;
+  localStorage.removeItem(QUEST_PLAN_KEY);
+  localStorage.removeItem(QUEST_PROG_KEY);
+  $("questTopic").value = "";
+  renderQuest();
 }
 
 // ---------- SHORTCUTS ----------
