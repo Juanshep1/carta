@@ -1884,36 +1884,58 @@
   /* ---------- WATCH STRIP ---------- */
   .watch-strip {
     grid-column: 1 / -1;
-    margin-top: 34px;
-    padding-top: 26px;
+    margin-top: 38px;
+    padding-top: 28px;
     border-top: 1px solid var(--rule);
+    position: relative;
+  }
+  .watch-strip::before {
+    content: "";
+    position: absolute;
+    left: 0; top: -1px;
+    width: 64px; height: 2px;
+    background: var(--gilt);
+    opacity: 0.65;
   }
   .watch-head {
     font-family: var(--f-display);
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 400;
     color: var(--ink);
-    margin: 0 0 14px;
+    margin: 0 0 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
   }
+  .watch-head::before {
+    content: "VI";
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.26em;
+    color: var(--oxblood);
+  }
+  .watch-head em { font-style: italic; color: var(--oxblood); font-weight: 400; }
   .watch-sub {
     font-family: var(--f-body);
     font-style: italic;
-    font-size: 14px;
+    font-size: 13px;
     color: var(--faded);
-    margin-left: 4px;
+    margin-left: auto;
   }
   .watch-rail {
     display: flex;
-    gap: 14px;
+    gap: 18px;
     overflow-x: auto;
-    padding-bottom: 8px;
+    padding: 4px 2px 14px;
     scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
   }
   .watch-card {
-    flex: 0 0 230px;
+    flex: 0 0 244px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 9px;
     cursor: pointer;
     text-decoration: none;
     color: inherit;
@@ -1922,17 +1944,53 @@
     padding: 0;
     text-align: left;
     font-family: inherit;
+    transition: transform 0.25s ease;
+  }
+  .watch-card:hover { transform: translateY(-3px); }
+  .watch-card:focus-visible {
+    outline: 2px solid var(--oxblood);
+    outline-offset: 4px;
   }
   .watch-card .thumb-wrap {
     position: relative;
-    width: 230px;
-    height: 130px;
-    background: var(--parchment-deep);
+    width: 244px;
+    aspect-ratio: 16 / 9;
+    background:
+      repeating-linear-gradient(45deg,
+        rgba(0,0,0,0.04) 0 2px,
+        transparent 2px 8px),
+      var(--parchment-deep);
     overflow: hidden;
     border: 1px solid var(--rule);
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.04),
+      0 8px 18px -10px rgba(0,0,0,0.22);
+    transition: box-shadow 0.25s ease, filter 0.25s ease;
+  }
+  .watch-card:hover .thumb-wrap {
+    box-shadow:
+      0 1px 0 rgba(0,0,0,0.05),
+      0 14px 26px -10px rgba(0,0,0,0.28);
   }
   .watch-card .thumb-wrap img {
     width: 100%; height: 100%; object-fit: cover; display: block;
+    transition: transform 0.4s ease;
+  }
+  .watch-card:hover .thumb-wrap img { transform: scale(1.04); }
+  /* Fallback glyph for broken/missing thumbs — sits behind the img so the
+     img covers it when it loads; if the img is hidden by onerror, this shows. */
+  .watch-card .thumb-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--f-display);
+    font-size: 44px;
+    color: var(--oxblood);
+    opacity: 0.42;
+    pointer-events: none;
+    font-style: italic;
   }
   .watch-card .play-badge {
     position: absolute;
@@ -1943,24 +2001,54 @@
     pointer-events: none;
   }
   .watch-card .play-badge .disc {
-    width: 46px; height: 46px;
+    width: 52px; height: 52px;
     border-radius: 50%;
-    background: rgba(245, 233, 211, 0.88);
-    border: 1px solid rgba(155, 122, 46, 0.7);
+    background: rgba(245, 233, 211, 0.92);
+    border: 1px solid rgba(155, 122, 46, 0.8);
+    box-shadow:
+      0 0 0 4px rgba(245, 233, 211, 0.18),
+      0 4px 14px rgba(0,0,0,0.25);
     display: grid; place-items: center;
+    transition: transform 0.2s ease;
   }
+  .watch-card:hover .play-badge .disc { transform: scale(1.08); }
   .watch-card .play-badge .disc::after {
     content: "";
     display: block;
     width: 0; height: 0;
-    border-left: 12px solid var(--oxblood);
-    border-top: 8px solid transparent;
-    border-bottom: 8px solid transparent;
-    margin-left: 3px;
+    border-left: 13px solid var(--oxblood);
+    border-top: 9px solid transparent;
+    border-bottom: 9px solid transparent;
+    margin-left: 4px;
+  }
+  .watch-card .source-chip {
+    position: absolute;
+    left: 8px; bottom: 8px;
+    padding: 3px 8px 3px 10px;
+    background: rgba(26, 20, 16, 0.78);
+    color: #f5e9d3;
+    font-family: var(--f-mono);
+    font-size: 9px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    backdrop-filter: blur(4px);
+  }
+  .watch-card .source-chip::before {
+    content: "";
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--gilt);
+  }
+  .watch-card .source-chip[data-source="wikimedia_commons"]::before {
+    background: var(--oxblood);
   }
   .watch-card .title {
     font-family: var(--f-body);
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.35;
     color: var(--ink);
     display: -webkit-box;
@@ -1968,12 +2056,40 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .watch-card .attr {
-    font-family: var(--f-mono);
-    font-size: 9px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+  .watch-card .creator {
+    font-family: var(--f-body);
+    font-size: 12px;
     color: var(--faded);
+    font-style: italic;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  /* Skeleton loaders shown while the /videos endpoint round-trips. */
+  .watch-rail.loading .watch-card { pointer-events: none; }
+  .watch-rail.loading .watch-card .thumb-wrap {
+    background: linear-gradient(100deg,
+      var(--parchment-deep) 20%,
+      rgba(255,255,255,0.35) 50%,
+      var(--parchment-deep) 80%);
+    background-size: 200% 100%;
+    animation: watch-shimmer 1.6s linear infinite;
+  }
+  .watch-rail.loading .watch-card .title {
+    height: 14px; background: var(--rule);
+    width: 80%;
+    color: transparent;
+  }
+  .watch-rail.loading .watch-card .creator {
+    height: 10px; background: var(--rule);
+    width: 50%;
+    color: transparent;
+    margin-top: 3px;
+  }
+  @keyframes watch-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
   .watch-empty {
     font-family: var(--f-body);
@@ -1985,63 +2101,105 @@
   /* ---------- VIDEO MODAL ---------- */
   .video-modal {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.75);
+    background: rgba(10, 8, 6, 0.82);
+    backdrop-filter: blur(10px);
     display: none;
     align-items: center;
     justify-content: center;
     z-index: 9000;
     padding: 24px;
+    animation: video-fade 0.2s ease;
   }
   .video-modal.open { display: flex; }
+  @keyframes video-fade {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
   .video-dialog {
     background: var(--parchment);
-    width: min(860px, 100%);
-    max-height: 90vh;
+    width: min(920px, 100%);
+    max-height: 92vh;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--rule);
     position: relative;
+    box-shadow:
+      0 1px 0 rgba(155, 122, 46, 0.35),
+      0 40px 80px -20px rgba(0, 0, 0, 0.55);
+    animation: video-pop 0.25s cubic-bezier(.2,.9,.3,1);
+    overflow: hidden;
+  }
+  @keyframes video-pop {
+    from { transform: translateY(10px) scale(0.985); }
+    to   { transform: translateY(0) scale(1); }
   }
   .video-close {
     position: absolute;
-    right: 10px; top: 10px;
-    width: 32px; height: 32px;
-    background: rgba(245, 233, 211, 0.95);
-    border: 1px solid var(--rule);
+    right: 12px; top: 12px;
+    width: 34px; height: 34px;
+    background: rgba(245, 233, 211, 0.96);
+    border: 1px solid rgba(155, 122, 46, 0.55);
     font-size: 18px; line-height: 1;
     cursor: pointer;
     color: var(--ink);
     z-index: 2;
+    font-family: var(--f-display);
+    transition: transform 0.15s ease;
   }
+  .video-close:hover { transform: rotate(90deg); }
   .video-stage {
     aspect-ratio: 16 / 9;
     background: #000;
+    position: relative;
   }
   .video-stage iframe, .video-stage video {
     width: 100%; height: 100%; border: 0;
+    background: #000;
+  }
+  .video-stage::after {
+    /* gilt hairline between the player and the meta panel */
+    content: "";
+    position: absolute;
+    left: 0; right: 0; bottom: -1px;
+    height: 1px;
+    background: var(--gilt);
+    opacity: 0.6;
   }
   .video-meta {
-    padding: 14px 18px 18px;
+    padding: 18px 22px 22px;
+    position: relative;
   }
   .video-meta .title {
     font-family: var(--f-display);
-    font-size: 20px;
+    font-size: 22px;
     color: var(--ink);
-    margin: 0 0 4px;
+    margin: 0 0 6px;
+    font-weight: 400;
   }
   .video-meta .desc {
     font-family: var(--f-body);
     font-style: italic;
-    font-size: 14px;
+    font-size: 14.5px;
     color: var(--ink-soft);
+    line-height: 1.55;
+    margin: 0;
   }
   .video-meta .sub {
     font-family: var(--f-mono);
     font-size: 10px;
-    letter-spacing: 0.2em;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--faded);
-    margin-top: 6px;
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .video-meta .sub::before {
+    content: "";
+    display: inline-block;
+    width: 22px; height: 1px;
+    background: var(--oxblood);
   }
 
   /* ---------- QUEST ---------- */
@@ -3099,7 +3257,7 @@
   </div>
 
   <section class="watch-strip" id="watchStrip" style="display:none">
-    <h3 class="watch-head">Watch <span class="watch-sub">— free archives</span></h3>
+    <h3 class="watch-head"><em>Watch</em><span class="watch-sub">free archival footage · CC / public domain</span></h3>
     <div class="watch-rail" id="watchRail"></div>
   </section>
 </div>
@@ -4601,33 +4759,56 @@ function quizReset() {
 }
 
 // ---------- WATCH STRIP ----------
+function watchSkeleton(n = 3) {
+  let s = "";
+  for (let i = 0; i < n; i++) {
+    s += `
+      <div class="watch-card" aria-hidden="true">
+        <div class="thumb-wrap"></div>
+        <div class="title">&nbsp;</div>
+        <div class="creator">&nbsp;</div>
+      </div>`;
+  }
+  return s;
+}
+
 async function loadWatchStrip(slug) {
   const strip = $("watchStrip");
   const rail = $("watchRail");
   if (!strip || !rail) return;
-  strip.style.display = "none";
-  rail.innerHTML = "";
+  // Reveal immediately with skeletons so the page doesn't jump once videos
+  // arrive; hide later if we get zero results.
+  strip.style.display = "block";
+  rail.classList.add("loading");
+  rail.innerHTML = watchSkeleton(3);
+
   try {
     const r = await api(`/api/articles/${encodeURIComponent(slug)}/videos`);
     const videos = r.videos || [];
-    if (!videos.length) return;   // stay hidden if nothing to show
-    rail.innerHTML = videos.map((v, i) => `
-      <button class="watch-card" type="button" data-idx="${i}">
+    rail.classList.remove("loading");
+    if (!videos.length) { strip.style.display = "none"; return; }
+    rail.innerHTML = videos.map((v, i) => {
+      const attrLabel = v.attribution || (v.source === "wikimedia_commons" ? "Wikimedia" : "Archive");
+      const subBits = [v.creator, v.year].filter(Boolean).join(" · ");
+      return `
+      <button class="watch-card" type="button" data-idx="${i}" aria-label="Play: ${escapeHtml(v.title || "")}">
         <div class="thumb-wrap">
+          <span class="thumb-fallback">§</span>
           <img src="${escapeHtml(v.thumb_url || "")}" alt="" loading="lazy"
                onerror="this.style.display='none'">
           <span class="play-badge"><span class="disc"></span></span>
+          <span class="source-chip" data-source="${escapeHtml(v.source || "")}">${escapeHtml(attrLabel)}</span>
         </div>
         <div class="title">${escapeHtml(v.title || "")}</div>
-        <div class="attr">${escapeHtml(v.attribution || v.source || "")}</div>
-      </button>
-    `).join("");
+        ${subBits ? `<div class="creator">${escapeHtml(subBits)}</div>` : `<div class="creator">&nbsp;</div>`}
+      </button>`;
+    }).join("");
     Array.from(rail.querySelectorAll(".watch-card")).forEach(btn => {
       btn.addEventListener("click", () => openVideo(videos[+btn.dataset.idx]));
     });
-    strip.style.display = "block";
   } catch {
-    // Silent — video surface is ornamental.
+    rail.classList.remove("loading");
+    strip.style.display = "none";
   }
 }
 
@@ -4637,7 +4818,9 @@ function openVideo(v) {
   const modal = $("videoModal");
   if (!stage || !modal) return;
   stage.innerHTML = v.source === "wikimedia_commons"
-    ? `<video controls playsinline autoplay preload="metadata" src="${escapeHtml(v.embed_url)}"></video>`
+    ? `<video controls playsinline autoplay preload="metadata"
+              poster="${escapeHtml(v.thumb_url || "")}"
+              src="${escapeHtml(v.embed_url)}"></video>`
     : `<iframe src="${escapeHtml(v.embed_url)}" allow="autoplay; encrypted-media" allowfullscreen></iframe>`;
   meta.innerHTML = `
     <div class="title">${escapeHtml(v.title || "")}</div>
