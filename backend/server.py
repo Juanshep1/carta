@@ -1093,21 +1093,25 @@ async def _parallel_auto_expand(topic: str,
                                 existing_slugs: set[str],
                                 existing_titles_lower: set[str],
                                 needed: int,
-                                max_concurrent: int = 5
+                                max_concurrent: int = 10
                                 ) -> list[str]:
-    """Run up to `needed` Wikipedia captures in parallel (capped at
-    `max_concurrent`). Parallel is what keeps us under Tailscale Funnel's
-    ~60s request cap even when auto-expand has real work to do."""
+    """Run Wikipedia captures in parallel batches until we've acquired
+    `needed` fresh slugs or exhausted the candidate pool.
+
+    Multiple batches cover the case where the first round under-fills
+    because some titles 404 or resolve to articles already in the codex.
+    Each batch fires up to `max_concurrent` requests concurrently to stay
+    inside Tailscale Funnel's ~60s request budget."""
     if needed <= 0:
         return []
-    candidates = await _wiki_related_titles(topic, limit=needed * 4)
-    picks: list[str] = []
-    for title in candidates:
-        if title.lower() in existing_titles_lower:
-            continue
-        picks.append(title)
-        if len(picks) >= min(needed, max_concurrent):
-            break
+
+    # Pull a generous pool so a second pass has something to try.
+    candidates = await _wiki_related_titles(topic, limit=max(needed * 4, 24))
+    pool = [t for t in candidates
+            if t.lower() not in existing_titles_lower]
+
+    acquired: list[str] = []
+    attempted_titles: set[str] = set()
 
     async def _one(title: str) -> Optional[str]:
         try:
@@ -1120,10 +1124,29 @@ async def _parallel_auto_expand(topic: str,
             log.info("compile: capture '%s' errored: %s", title, e)
             return None
         slug = r.get("slug")
-        return slug if (slug and slug not in existing_slugs) else None
+        return slug if (slug and slug not in existing_slugs
+                        and slug not in acquired) else None
 
-    results = await asyncio.gather(*(_one(t) for t in picks))
-    return [s for s in results if s]
+    # Up to 3 batches so we don't loop forever on pathological topics.
+    for _batch_idx in range(3):
+        remaining = needed - len(acquired)
+        if remaining <= 0 or not pool:
+            break
+        batch_size = min(max_concurrent, remaining, len(pool))
+        # Over-fetch slightly within the batch to absorb 404s without
+        # needing another full round-trip for typical cases.
+        batch_size = min(len(pool), batch_size + max(2, remaining // 2))
+        batch = pool[:batch_size]
+        pool = pool[batch_size:]
+        attempted_titles.update(batch)
+        results = await asyncio.gather(*(_one(t) for t in batch))
+        for slug in results:
+            if slug and slug not in acquired:
+                acquired.append(slug)
+                if len(acquired) >= needed:
+                    break
+
+    return acquired[:needed]
 
 
 async def _generate_curriculum(topic: str,
@@ -1608,7 +1631,12 @@ async def api_compile(req: CompileReq):
     scored = _compile_rank(topic, corpus)
     relevant = [a for _s, a in scored][:target]
 
-    # Auto-expand — parallel, capped at 5 concurrent captures.
+    # Auto-expand — parallel captures up to `target`-fill. We TRUST the
+    # Wikipedia search ranker for newly captured articles: if we re-applied
+    # the strict keyword filter here, auto-captures for fuzzy topics would
+    # get silently dropped and the user would end up with fewer chapters
+    # than the slider said. The existing (strict-scored) corpus stays at
+    # the top; Wikipedia finds fill the rest in search-relevance order.
     added: list[str] = []
     if req.auto_expand and len(relevant) < target:
         needed = target - len(relevant)
@@ -1616,10 +1644,9 @@ async def api_compile(req: CompileReq):
         existing_titles_lower = {(a.get("title") or "").lower() for a in corpus}
         added = await _parallel_auto_expand(
             topic, existing_slugs, existing_titles_lower,
-            needed=needed, max_concurrent=5,
+            needed=needed, max_concurrent=10,
         )
         if added:
-            # Re-read + re-rank so newly captured articles slot into the top.
             with get_db() as db:
                 placeholders = ",".join("?" * len(added))
                 new_rows = db.execute(f"""
@@ -1629,11 +1656,17 @@ async def api_compile(req: CompileReq):
                       FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
                      WHERE a.slug IN ({placeholders})
                 """, added).fetchall()
-            new_articles = [dict(r) for r in new_rows]
-            # Score and insert while preserving relevance ordering.
-            all_articles = relevant + new_articles
-            rescored = _compile_rank(topic, all_articles)
-            relevant = [a for _s, a in rescored][:target]
+            # Preserve Wikipedia's relevance order (matches `added` list order,
+            # which itself follows `picks` from _parallel_auto_expand).
+            by_slug = {r["slug"]: dict(r) for r in new_rows}
+            ordered_new = [by_slug[s] for s in added if s in by_slug]
+            # Append to the strict-filtered list, dedupe by slug, cap at target.
+            existing_slug_set = {a["slug"] for a in relevant}
+            for na in ordered_new:
+                if na["slug"] not in existing_slug_set:
+                    relevant.append(na)
+                    existing_slug_set.add(na["slug"])
+            relevant = relevant[:target]
 
     if not relevant:
         raise HTTPException(
