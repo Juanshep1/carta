@@ -565,7 +565,25 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
 
     reply = data.get("message", {}).get("content", "")
     # strip <think> blocks some models emit
-    return re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    # Some cloud SKUs (notably gpt-oss:20b on certain JSON-schema prompts)
+    # happily return HTTP 200 with an empty content body — there's no error
+    # to surface, but downstream JSON parsing will explode. Treat that as a
+    # retryable failure and hop to the fallback model, mirroring the 5xx path.
+    want_cloud = (provider or "").lower() == "cloud" and OLLAMA_CLOUD_KEY
+    if (_allow_fallback and want_cloud and format_json
+            and not reply
+            and chosen_model != CLOUD_FALLBACK_MODEL):
+        log.info("ollama cloud: '%s' returned 200 with empty JSON body; "
+                 "falling back to '%s'", chosen_model, CLOUD_FALLBACK_MODEL)
+        return await ollama_chat(
+            messages, temperature=temperature, format_json=format_json,
+            max_tokens=max_tokens, timeout=timeout,
+            provider="cloud", model=CLOUD_FALLBACK_MODEL,
+            _allow_fallback=False,
+        )
+    return reply
 
 
 # ---------- FastAPI ----------
@@ -1591,6 +1609,8 @@ async def api_carta_quest(req: QuestReq):
 
     # Rank candidates by a cheap keyword/substring match first so the prompt
     # stays short (we hand the model only ~30 titles, not the whole corpus).
+    # Zero-score articles are filtered out — we'd rather have short days than
+    # pad the plan with irrelevant picks.
     needles = [w for w in re.findall(r"\w{3,}", topic.lower()) if w]
     def score(a: dict) -> int:
         blob = " ".join([
@@ -1600,10 +1620,14 @@ async def api_carta_quest(req: QuestReq):
             (a.get("province_name") or "").lower(),
         ])
         return sum(1 for n in needles if n in blob)
-    ranked = sorted(corpus, key=lambda a: (-score(a), a.get("title") or ""))
-    shortlist = ranked[:30] if ranked else corpus[:30]
-    menu = "\n".join(f"- {a['title']} [{a['slug']}] — {a.get('province_name') or '—'}"
-                     for a in shortlist)
+    scored = [(score(a), a) for a in corpus]
+    relevant = [a for s, a in scored if s > 0]
+    relevant.sort(key=lambda a: (-score(a), a.get("title") or ""))
+    shortlist = relevant[:30]
+    relevant_slugs = {a["slug"] for a in shortlist}
+    menu = ("\n".join(f"- {a['title']} [{a['slug']}] — {a.get('province_name') or '—'}"
+                      for a in shortlist)
+            if shortlist else "(no matching articles captured yet)")
 
     system = (
         "You design short, focused reading quests from Juan's personal wiki. "
@@ -1613,12 +1637,38 @@ async def api_carta_quest(req: QuestReq):
         '      "quiz_count": 2, "reflection": "one-sentence prompt" }\n'
         "  ]\n"
         "}\n"
-        "Exactly 7 days. Each day 1–3 article_slugs drawn ONLY from the list "
-        "below (use the bracketed slug, never invent). quiz_count in [0..3]. "
-        "Reflection is a single short sentence inviting Juan to write. "
-        "Order the days from introduction → deeper → synthesis."
+        "Exactly 7 days. Each day 0–3 article_slugs drawn ONLY from the list "
+        "below (use the bracketed slug, never invent). Never include a slug "
+        "that isn't in the list. If fewer than 7 days of reading fit the "
+        "topic, return some days with an empty article_slugs array and a "
+        "short reflection prompt — DO NOT pad with unrelated articles. "
+        "quiz_count in [0..3]. Order days from introduction → deeper → synthesis."
     )
-    user = f"Topic: {topic}\n\nAvailable articles:\n{menu}"
+    user = (
+        f"Topic: {topic}\n"
+        f"Relevant articles available: {len(shortlist)} "
+        f"(out of {len(corpus)} total in the codex)\n\n"
+        f"Available articles:\n{menu}"
+    )
+
+    # Skip the model entirely if nothing in the codex matches the topic.
+    # Burning tokens to get back 7 empty days is worse UX than saying so.
+    if not shortlist:
+        return {
+            "topic": topic,
+            "days": [
+                {
+                    "day": n,
+                    "article_slugs": [],
+                    "articles": [],
+                    "quiz_count": 0,
+                    "reflection": (f"No captured articles touch '{topic}' yet. "
+                                   "Consider capturing one before starting this quest.")
+                                   if n == 1 else "",
+                }
+                for n in range(1, 8)
+            ],
+        }
 
     try:
         raw = await ollama_chat(
@@ -1643,14 +1693,16 @@ async def api_carta_quest(req: QuestReq):
         except json.JSONDecodeError as e:
             raise HTTPException(502, f"Invalid JSON from quest: {e}")
 
-    valid_slugs = {a["slug"] for a in corpus}
     title_by_slug = {a["slug"]: a["title"] for a in corpus}
     province_by_slug = {a["slug"]: a.get("province_name") for a in corpus}
 
     days_out: list[dict] = []
     for idx, d in enumerate((data.get("days") or [])[:7], start=1):
         raw_slugs = [str(s).strip() for s in (d.get("article_slugs") or [])]
-        clean_slugs = [s for s in raw_slugs if s in valid_slugs][:3]
+        # Keep only topic-relevant slugs. If the corpus has no relevant
+        # matches at all (relevant_slugs empty), we end up with empty days
+        # and a reflection prompt — honest about the thin corpus.
+        clean_slugs = [s for s in raw_slugs if s in relevant_slugs][:3]
         try:
             qc = max(0, min(int(d.get("quiz_count", 1)), 3))
         except (TypeError, ValueError):
