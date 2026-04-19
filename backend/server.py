@@ -524,6 +524,12 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
         "model": chosen_model,
         "messages": messages,
         "stream": False,
+        # `think: false` tells reasoning-capable models (gpt-oss, deepseek,
+        # qwen3, etc.) to skip the <thinking> phase and go straight to the
+        # answer. Without this, gpt-oss:20b happily burns all num_predict
+        # tokens on planning and returns content="". Models that don't know
+        # the flag ignore it.
+        "think": False,
         "options": {"temperature": temperature, "num_predict": max_tokens},
     }
     if format_json:
@@ -2046,7 +2052,7 @@ async def api_carta_chat(req: CartaChatReq):
 
     try:
         reply = await ollama_chat(
-            messages, temperature=0.75, max_tokens=260,
+            messages, temperature=0.75, max_tokens=600,
             provider=req.provider, model=req.model,
         )
     except OllamaError as e:
