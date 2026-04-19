@@ -2430,6 +2430,210 @@
     background: var(--oxblood);
   }
 
+  /* ---------- COMPILE MODAL ---------- */
+  .compile-modal {
+    position: fixed; inset: 0;
+    background: rgba(10, 8, 6, 0.72);
+    backdrop-filter: blur(8px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9000;
+    padding: 24px;
+  }
+  .compile-modal.open { display: flex; }
+  .compile-dialog {
+    position: relative;
+    background: var(--parchment);
+    width: min(620px, 100%);
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--rule);
+    box-shadow:
+      0 2px 0 rgba(155,122,46,0.35),
+      0 40px 80px -20px rgba(0,0,0,0.55);
+    overflow: auto;
+  }
+  .compile-head {
+    padding: 28px 30px 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .compile-head .folio {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin-bottom: 8px;
+  }
+  .compile-head h1 {
+    font-family: var(--f-display);
+    font-weight: 400;
+    font-size: 30px;
+    color: var(--ink);
+    margin: 0 0 6px;
+    line-height: 1.1;
+  }
+  .compile-head h1 em { font-style: italic; color: var(--oxblood); }
+  .compile-head p {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 14px;
+  }
+  .compile-body {
+    padding: 22px 30px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .compile-body label {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--faded);
+  }
+  .compile-body label .chaps {
+    color: var(--oxblood);
+    margin-left: 6px;
+    font-size: 12px;
+  }
+  .compile-body input[type="text"] {
+    width: 100%;
+    padding: 12px 14px;
+    font-family: var(--f-body);
+    font-size: 16px;
+    background: rgba(0,0,0,0.03);
+    border: none;
+    border-bottom: 1.5px solid var(--rule);
+    color: var(--ink);
+  }
+  .compile-body input[type="text"]:focus {
+    outline: none;
+    border-bottom-color: var(--oxblood);
+  }
+  .compile-body input[type="range"] {
+    width: 100%;
+    accent-color: var(--oxblood);
+  }
+  .format-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--rule);
+  }
+  .format-toggle button {
+    padding: 10px 12px;
+    background: transparent;
+    border: 0;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  .format-toggle button.active {
+    background: var(--oxblood);
+    color: var(--parchment);
+  }
+  .compile-body .auto-expand {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    letter-spacing: 0;
+    text-transform: none;
+    font-family: var(--f-body);
+    font-size: 13px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .compile-body .auto-expand input { margin-top: 4px; accent-color: var(--oxblood); }
+  .compile-body .auto-expand em {
+    font-style: italic;
+    color: var(--faded);
+    display: block;
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .compile-begin {
+    padding: 14px 22px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    border: none;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .compile-begin:hover { background: var(--oxblood-deep); }
+  .compile-begin:disabled { background: var(--whisper); cursor: not-allowed; }
+  .compile-error {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--oxblood);
+    font-size: 13px;
+  }
+  .compile-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 14px;
+  }
+  .compile-status .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--rule);
+    border-top-color: var(--oxblood);
+    border-radius: 50%;
+    animation: cm-spin 0.8s linear infinite;
+  }
+  @keyframes cm-spin { to { transform: rotate(360deg); } }
+  .compile-result {
+    padding: 16px;
+    background: rgba(0,0,0,0.03);
+    border: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .compile-result .chapters {
+    font-family: var(--f-display);
+    font-size: 28px;
+    color: var(--ink);
+  }
+  .compile-result .note {
+    font-family: var(--f-body);
+    font-style: italic;
+    color: var(--ink-soft);
+    font-size: 13px;
+  }
+  .compile-result .actions {
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .compile-result .actions a, .compile-result .actions button {
+    padding: 10px 16px;
+    font-family: var(--f-mono);
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    background: transparent;
+  }
+  .compile-result .actions .primary {
+    background: var(--oxblood);
+    color: var(--parchment);
+    border-color: var(--oxblood);
+  }
+
   /* ---------- WATCH PAGE ---------- */
   .watch-view { display: none; padding: 30px 0 90px; }
   body.view-watch .watch-view { display: block; }
@@ -3652,6 +3856,7 @@
     <a onclick="nav('watch')">Watch</a>
     <a onclick="nav('quiz')">Quiz</a>
     <a onclick="nav('quest')">Quest</a>
+    <a onclick="openCompile()">Compile</a>
     <a onclick="openCapture()">Capture</a>
     <a onclick="openSettings()">Settings</a>
   </nav>
@@ -3863,6 +4068,50 @@
     <div class="actions">
       <button class="btn" onclick="quizReset()">Another quiz</button>
       <button class="btn btn-seal" id="quizFinalOpen">Open the article</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ COMPILE MODAL ============ -->
+<div class="compile-modal" id="compileModal" onclick="if(event.target.id==='compileModal')closeCompile()">
+  <div class="compile-dialog" role="dialog" aria-modal="true">
+    <button class="carta-close" onclick="closeCompile()">×</button>
+    <div class="compile-head">
+      <div class="folio">Folio VIII · Atelier</div>
+      <h1>A <em>learning book</em>, compiled.</h1>
+      <p>Give CARTA a topic. She pulls every matching article from your codex — and, if needed, captures a few more from Wikipedia to round it out.</p>
+    </div>
+    <div class="compile-body" id="compileBody">
+      <label>Topic</label>
+      <input id="compileTopic" type="text"
+             placeholder="the French Revolution, cephalopod cognition…"
+             autocomplete="off" spellcheck="false">
+
+      <label>Format</label>
+      <div class="format-toggle">
+        <button type="button" id="compileFmtEpub" class="active" onclick="setCompileFormat('epub')">EPUB (book)</button>
+        <button type="button" id="compileFmtHtml" onclick="setCompileFormat('html')">Printable HTML / PDF</button>
+      </div>
+
+      <label>Chapters <span class="chaps" id="compileChapsLabel">8</span></label>
+      <input id="compileCount" type="range" min="3" max="20" step="1" value="8"
+             oninput="$('compileChapsLabel').textContent=this.value">
+
+      <label class="auto-expand">
+        <input id="compileAuto" type="checkbox" checked>
+        <span>
+          <strong>Auto-capture missing articles</strong>
+          <em>Pull from Wikipedia if the codex is thin on this topic.</em>
+        </span>
+      </label>
+
+      <button class="compile-begin" id="compileBegin" onclick="runCompile()">Compile ·&nbsp;✦</button>
+      <div id="compileError" class="compile-error" style="display:none"></div>
+      <div id="compileStatus" class="compile-status" style="display:none">
+        <span class="spinner"></span>
+        <span>CARTA is gathering chapters — this may take a minute…</span>
+      </div>
+      <div id="compileResult" class="compile-result" style="display:none"></div>
     </div>
   </div>
 </div>
@@ -5319,6 +5568,104 @@ function quizReset() {
   $("quizStart").style.display = "grid";
 }
 
+// ---------- COMPILE ----------
+let _compileFmt = "epub";
+let _lastCompileBlobUrl = null;
+
+function openCompile() {
+  const m = $("compileModal");
+  m.classList.add("open");
+  document.body.style.overflow = "hidden";
+  $("compileTopic").focus();
+  resetCompileResult();
+}
+function closeCompile() {
+  $("compileModal").classList.remove("open");
+  document.body.style.overflow = "";
+}
+function setCompileFormat(f) {
+  _compileFmt = f;
+  $("compileFmtEpub").classList.toggle("active", f === "epub");
+  $("compileFmtHtml").classList.toggle("active", f === "html");
+}
+function resetCompileResult() {
+  $("compileError").style.display = "none";
+  $("compileResult").style.display = "none";
+  $("compileStatus").style.display = "none";
+  if (_lastCompileBlobUrl) {
+    URL.revokeObjectURL(_lastCompileBlobUrl);
+    _lastCompileBlobUrl = null;
+  }
+}
+
+async function runCompile() {
+  const topic = $("compileTopic").value.trim();
+  if (!topic) return;
+  const btn = $("compileBegin");
+  const err = $("compileError");
+  const statusEl = $("compileStatus");
+  resetCompileResult();
+  btn.disabled = true;
+  statusEl.style.display = "flex";
+  try {
+    const body = {
+      topic,
+      format: _compileFmt,
+      target_articles: Number($("compileCount").value),
+      auto_expand: $("compileAuto").checked,
+    };
+    // api() uses JSON fetch; compile returns a binary/HTML body so we bypass
+    // it and go to fetch directly. Reuses CARTA.base + auth header.
+    const url = CARTA.base + "/api/compile";
+    const headers = { "Content-Type": "application/json" };
+    const key = localStorage.getItem("carta.api_key");
+    if (key) headers["Authorization"] = "Bearer " + key;
+    const r = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      // Browser fetch doesn't let us set a timeout, but server will respond
+      // within its own 5-minute request cap.
+    });
+    if (!r.ok) {
+      const t = await r.text();
+      throw new Error(`${r.status} ${t.slice(0, 240)}`);
+    }
+    const compiled = Number(r.headers.get("X-Compiled-Count") || "0");
+    const added = Number(r.headers.get("X-Auto-Added") || "0");
+    const blob = await r.blob();
+    const blobURL = URL.createObjectURL(blob);
+    _lastCompileBlobUrl = blobURL;
+
+    statusEl.style.display = "none";
+    const slug = topic.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const filename = `${slug || "learning"}-learning.${_compileFmt}`;
+
+    const note = added > 0
+      ? `CARTA captured <em>${added}</em> new article${added === 1 ? "" : "s"} from Wikipedia to round it out.`
+      : `Compiled entirely from articles already in your codex.`;
+
+    const actions = _compileFmt === "html"
+      ? `<a class="primary" href="${blobURL}" target="_blank" rel="noopener">Open in new tab · Print / save as PDF</a>
+         <a href="${blobURL}" download="${filename}">Download HTML</a>`
+      : `<a class="primary" href="${blobURL}" download="${filename}">Download EPUB</a>
+         <a href="${blobURL}" target="_blank" rel="noopener">Preview</a>`;
+
+    $("compileResult").innerHTML = `
+      <div class="chapters">${compiled} chapter${compiled === 1 ? "" : "s"}</div>
+      <div class="note">${note}</div>
+      <div class="actions">${actions}</div>
+    `;
+    $("compileResult").style.display = "flex";
+  } catch (e) {
+    statusEl.style.display = "none";
+    err.textContent = "Couldn't compile — " + (e.message || e);
+    err.style.display = "block";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- WATCH TAB (aggregated feed) ----------
 async function openWatchView() {
   window.scrollTo({ top: 0 });
@@ -5663,7 +6010,7 @@ document.addEventListener("keydown", (e) => {
   if (mod && e.key === "j") { e.preventDefault(); toggleCarta(); }
   if (mod && e.key === "n") { e.preventDefault(); openCapture(); }
   if (mod && e.key === ",") { e.preventDefault(); openSettings(); }
-  if (e.key === "Escape") { closeSearch(); closeCapture(); closeSettings(); closeVideo(); }
+  if (e.key === "Escape") { closeSearch(); closeCapture(); closeSettings(); closeVideo(); closeCompile(); }
 });
 
 // Click-outside
