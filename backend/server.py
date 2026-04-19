@@ -591,8 +591,8 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     has_thinking = bool((msg.get("thinking") or "").strip())
     if (_length_retries > 0 and not reply and has_thinking
             and done_reason == "length"
-            and max_tokens < 2000):
-        doubled = min(max_tokens * 2, 2000)
+            and max_tokens < 6000):
+        doubled = min(max_tokens * 2, 6000)
         log.info("ollama: '%s' ran out of tokens on thinking phase "
                  "(done_reason=length); retrying at num_predict=%d",
                  chosen_model, doubled)
@@ -1170,8 +1170,8 @@ async def _generate_curriculum(topic: str,
         raw = await ollama_chat(
             [{"role": "system", "content": system},
              {"role": "user", "content": user}],
-            temperature=0.35, format_json=True, max_tokens=1600,
-            timeout=60,
+            temperature=0.35, format_json=True, max_tokens=3000,
+            timeout=120,
             provider=provider, model=model,
         )
     except OllamaError as e:
@@ -1182,15 +1182,20 @@ async def _generate_curriculum(topic: str,
         return None
 
     raw = (raw or "").strip()
+    if not raw:
+        log.info("compile: curriculum LLM returned empty reply")
+        return None
     try:
         data = json.loads(raw)
     except Exception:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
+            log.info("compile: curriculum raw not parseable: %s", raw[:400])
             return None
         try:
             data = json.loads(m.group(0))
         except Exception:
+            log.info("compile: curriculum extracted JSON invalid: %s", m.group(0)[:400])
             return None
 
     if not isinstance(data, dict) or not isinstance(data.get("chapters"), list):
