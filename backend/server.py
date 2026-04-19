@@ -1060,6 +1060,17 @@ VIDEO_CACHE_TTL_SECONDS = 60 * 60 * 24 * 7   # 7 days — videos rarely churn
 VIDEO_QUERY_TIMEOUT = 10
 
 
+def _videos_cache_sig() -> str:
+    """Signature for the current set of active video sources. When the set
+    changes (e.g. YOUTUBE_API_KEY is set/unset, or we add a new source),
+    the signature flips and previously-cached payloads are treated as
+    stale so YouTube/LoC results appear without a 7-day wait."""
+    sources = ["ia", "commons", "loc"]          # always on
+    if YOUTUBE_API_KEY:
+        sources.append("yt")
+    return "v3:" + "+".join(sorted(sources))
+
+
 async def _search_internet_archive(title: str) -> list[dict]:
     """Returns up to 3 Internet Archive movie items matching `title`.
     Applies a quality filter to sidestep the fan-upload noise in
@@ -1451,21 +1462,188 @@ async def api_article_videos(slug: str, refresh: bool = False):
                 ).fetchone()[0]
                 try:
                     if int(age) < VIDEO_CACHE_TTL_SECONDS:
-                        return {"slug": slug, "videos": json.loads(cached["payload"])}
+                        parsed = json.loads(cached["payload"])
+                        # New payload shape: {"sig": "...", "videos": [...]}.
+                        # Old bare-list payloads are treated as stale so the
+                        # YouTube/LoC expansion can backfill without waiting
+                        # 7 days per article.
+                        if (isinstance(parsed, dict)
+                                and parsed.get("sig") == _videos_cache_sig()):
+                            return {"slug": slug, "videos": parsed.get("videos", [])}
                 except (TypeError, ValueError):
                     pass
 
     videos = await _fetch_article_videos(dict(row))
+    payload = json.dumps({"sig": _videos_cache_sig(), "videos": videos})
     with get_db() as db:
         db.execute("""
             INSERT INTO article_videos (article_id, payload, fetched_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(article_id) DO UPDATE SET
               payload = excluded.payload, fetched_at = CURRENT_TIMESTAMP
-        """, (aid, json.dumps(videos)))
+        """, (aid, payload))
         db.commit()
 
     return {"slug": slug, "videos": videos}
+
+
+# ---------- /api/watch ----------
+# Aggregated video feed across every captured article. Pure read from the
+# article_videos cache — no upstream fetches here so the page loads in ~100ms
+# even with a corpus of hundreds.
+
+SOURCE_META = {
+    "internet_archive": ("Internet Archive", "curated archives"),
+    "youtube":          ("YouTube",          "educational + lectures"),
+    "wikimedia_commons":("Wikimedia Commons","free-licensed clips"),
+    "library_of_congress": ("Library of Congress", "digitized film catalog"),
+}
+
+
+def _load_all_cached_videos() -> list[dict]:
+    """Flatten every cached payload into a list of video dicts annotated with
+    article_slug / article_title / province_name / captured_at. Stale-sig
+    payloads and bare-list payloads both yield their videos — we'd rather
+    show something than nothing on the /watch aggregate view."""
+    with get_db() as db:
+        rows = db.execute("""
+            SELECT av.payload, av.fetched_at,
+                   a.slug AS article_slug, a.title AS article_title,
+                   a.captured_at, p.name AS province_name, p.slug AS province_slug
+              FROM article_videos av
+              JOIN articles a ON a.id = av.article_id
+              LEFT JOIN provinces p ON p.id = a.province_id
+        """).fetchall()
+
+    out: list[dict] = []
+    for r in rows:
+        try:
+            parsed = json.loads(r["payload"])
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            videos = parsed.get("videos") or []
+        elif isinstance(parsed, list):
+            videos = parsed
+        else:
+            continue
+        for v in videos:
+            if not isinstance(v, dict) or not v.get("embed_url"):
+                continue
+            vv = dict(v)
+            vv["article_slug"] = r["article_slug"]
+            vv["article_title"] = r["article_title"]
+            vv["province_name"] = r["province_name"]
+            vv["province_slug"] = r["province_slug"]
+            vv["captured_at"] = r["captured_at"]
+            out.append(vv)
+    return out
+
+
+def _pick_featured(videos: list[dict]) -> Optional[dict]:
+    """Pick a hero video: prefer Internet Archive (usually high-signal
+    archival), then LoC, then Commons, then YouTube — scanned from the
+    most-recently-captured article downward so the hero rotates as Juan
+    captures things."""
+    by_article: list[dict] = sorted(
+        videos, key=lambda v: v.get("captured_at") or "", reverse=True
+    )
+    priority = {"internet_archive": 0, "library_of_congress": 1,
+                "wikimedia_commons": 2, "youtube": 3}
+    for v in by_article:
+        if v.get("source") in priority:
+            return v
+    return by_article[0] if by_article else None
+
+
+@app.get("/api/watch")
+def api_watch():
+    """Aggregated Watch feed: featured hero + sections grouped by recency,
+    source, and province. Used by the dedicated Watch tab on iOS/web."""
+    videos = _load_all_cached_videos()
+    if not videos:
+        return {"featured": None, "sections": []}
+
+    # ---- Featured ---- (most-recent-capture's best source)
+    featured = _pick_featured(videos)
+
+    # ---- Section: Newly added ---- (videos from 8 most-recently-captured articles)
+    by_recent_article: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for v in sorted(videos, key=lambda v: v.get("captured_at") or "", reverse=True):
+        slug = v.get("article_slug") or ""
+        if slug not in by_recent_article:
+            if len(order) >= 8:
+                continue
+            order.append(slug)
+            by_recent_article[slug] = []
+        by_recent_article[slug].append(v)
+    newly_added: list[dict] = []
+    # One per article first (diversity), then fill with seconds if short.
+    for slug in order:
+        newly_added.append(by_recent_article[slug][0])
+    for slug in order:
+        for v in by_recent_article[slug][1:]:
+            if len(newly_added) >= 12:
+                break
+            newly_added.append(v)
+        if len(newly_added) >= 12:
+            break
+
+    # ---- Source sections ----
+    by_source: dict[str, list[dict]] = {}
+    for v in videos:
+        by_source.setdefault(v.get("source") or "", []).append(v)
+    source_sections = []
+    for src_key in ("internet_archive", "youtube",
+                    "wikimedia_commons", "library_of_congress"):
+        items = by_source.get(src_key) or []
+        if not items:
+            continue
+        title, subtitle = SOURCE_META.get(src_key, (src_key, ""))
+        source_sections.append({
+            "kind": "source",
+            "source": src_key,
+            "title": title,
+            "subtitle": subtitle,
+            "videos": items[:16],
+        })
+
+    # ---- Province sections ---- (one rail per province that has >= 2 videos)
+    by_province: dict[str, dict] = {}
+    for v in videos:
+        name = v.get("province_name")
+        slug = v.get("province_slug")
+        if not name:
+            continue
+        key = slug or name
+        bucket = by_province.setdefault(key, {"name": name, "slug": slug, "videos": []})
+        bucket["videos"].append(v)
+    province_sections = []
+    for bucket in sorted(by_province.values(),
+                         key=lambda b: len(b["videos"]), reverse=True):
+        if len(bucket["videos"]) < 2:
+            continue
+        province_sections.append({
+            "kind": "province",
+            "title": bucket["name"],
+            "subtitle": f"{len(bucket['videos'])} clips",
+            "province_slug": bucket["slug"],
+            "videos": bucket["videos"][:12],
+        })
+
+    sections = []
+    if newly_added:
+        sections.append({
+            "kind": "recent",
+            "title": "Newly Added",
+            "subtitle": "from your latest captures",
+            "videos": newly_added,
+        })
+    sections.extend(source_sections)
+    sections.extend(province_sections)
+
+    return {"featured": featured, "sections": sections}
 
 
 # ---------- province classification ----------
