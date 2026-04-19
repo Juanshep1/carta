@@ -593,7 +593,7 @@ app = FastAPI(title="CARTA", version="1.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=(
-        r"https://([a-z0-9-]+\.)*(netlify\.app|netlify\.com|ts\.net)"
+        r"https://([a-z0-9-]+\.)*(netlify\.app|netlify\.com|ts\.net|github\.io)"
         r"|https?://(localhost|127\.0\.0\.1)(:[0-9]+)?"
         r"|https?://10\.\d+\.\d+\.\d+(:[0-9]+)?"
         r"|https?://192\.168\.\d+\.\d+(:[0-9]+)?"
