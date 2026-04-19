@@ -1229,7 +1229,11 @@ async def _parallel_auto_expand(topic: str,
 
     async def _one(title: str) -> Optional[str]:
         try:
-            r = await api_capture(CaptureReq(topic=title, wikipedia_title=title))
+            r = await api_capture(CaptureReq(
+                topic=title,
+                wikipedia_title=title,
+                topic_context=topic,
+            ))
         except HTTPException as e:
             log.info("compile: capture '%s' skipped (%d): %s",
                      title, e.status_code, e.detail)
@@ -2698,7 +2702,8 @@ def api_watch():
 
 # ---------- province classification ----------
 def classify_by_keyword(*texts: str) -> Optional[str]:
-    """First-match keyword classifier over the canonical PROVINCE_NAMES."""
+    """Legacy first-match classifier, kept for callers that don't have
+    body text to pass. New code should call `classify_by_content`."""
     blob = " ".join(t for t in texts if t).lower()
     if not blob:
         return None
@@ -2709,15 +2714,81 @@ def classify_by_keyword(*texts: str) -> Optional[str]:
     return None
 
 
-async def classify_by_llm(title: str, summary: str) -> Optional[str]:
-    """Ask Ollama to pick one of PROVINCE_NAMES. Returns None on any error."""
+def classify_by_content(
+    title: str,
+    summary: str,
+    body_text: str = "",
+    topic_context: str = "",
+) -> Optional[tuple[str, float]]:
+    """Weighted-scoring classifier. Each province's keywords contribute:
+      - title match:          5 points (article is *about* this keyword)
+      - summary match:        3 points (Wikipedia's own framing)
+      - topic-context match:  2 points (compile's driving topic — e.g.
+                              "telekinesis" should push Parapsychology
+                              into the parapsychology-adjacent province)
+      - body occurrence:      0.5 each, capped at 3 per keyword
+                              (so a List of Characters that happens to
+                              say "telekinesis" 50 times across 200
+                              characters doesn't dominate).
+
+    Unlike the old first-match classifier, this gives every province a
+    real score and returns the winner *plus* its score so the caller can
+    decide whether the signal is strong enough to commit. Weak signals
+    (< 3.0) return None and let the LLM classifier weigh in."""
+    title_low = (title or "").lower()
+    summary_low = (summary or "").lower()
+    context_low = (topic_context or "").lower()
+    # Cap body length to keep classification cheap on long articles.
+    body_low = (body_text or "").lower()[:18000]
+
+    scores: dict[str, float] = {}
+    for name, keywords in PROVINCE_KEYWORDS:
+        score = 0.0
+        for kw in keywords:
+            if kw in title_low:     score += 5.0
+            if kw in summary_low:   score += 3.0
+            if kw in context_low:   score += 2.0
+            hits = body_low.count(kw)
+            if hits:
+                score += min(hits * 0.5, 3.0)
+        scores[name] = score
+
+    if not scores:
+        return None
+    best = max(scores.items(), key=lambda x: x[1])
+    if best[1] < 3.0:
+        return None
+    return best
+
+
+async def classify_by_llm(
+    title: str,
+    summary: str,
+    body_text: str = "",
+    topic_context: str = "",
+) -> Optional[str]:
+    """Ask Ollama to pick one of PROVINCE_NAMES with whatever context we
+    have. Returns None on any error. Kept permissive for the UI's
+    standalone captures (no body, no context) while giving compile a
+    richer payload to reason over."""
     options = ", ".join(PROVINCE_NAMES)
     system = (
-        "Classify a Wikipedia topic into EXACTLY ONE of these provinces. "
+        "Classify a Wikipedia topic into EXACTLY ONE of these provinces, "
+        "based on what the article is primarily about. Ignore tangential "
+        "mentions — focus on the subject's core domain.\n"
         "Respond with ONLY the province name, no punctuation, no prose.\n"
         f"Provinces: {options}"
     )
-    user = f"Title: {title}\nSummary: {(summary or '')[:600]}"
+    parts = [f"Title: {title}"]
+    if topic_context:
+        parts.append(f"Context: this article was captured as part of a study on '{topic_context}'.")
+    if summary:
+        parts.append(f"Summary: {summary[:600]}")
+    if body_text:
+        # First ~1.2k chars of the body is usually the lead + first
+        # section: enough to reveal the article's actual domain.
+        parts.append(f"Opening: {body_text[:1200]}")
+    user = "\n".join(parts)
     try:
         raw = await ollama_chat(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -2727,11 +2798,9 @@ async def classify_by_llm(title: str, summary: str) -> Optional[str]:
         log.info("classify_by_llm unavailable: %s", e)
         return None
     pick = (raw or "").strip().strip('"').strip("'").splitlines()[0].strip()
-    # Allow case-insensitive exact match against canonical names.
     for name in PROVINCE_NAMES:
         if pick.lower() == name.lower():
             return name
-    # Loose match: pick the first canonical name that appears in the response.
     low = pick.lower()
     for name in PROVINCE_NAMES:
         if name.lower() in low:
@@ -2744,10 +2813,23 @@ async def resolve_province(
     requested: Optional[str],
     title: str,
     summary: str,
+    body_text: str = "",
+    topic_context: str = "",
 ) -> Optional[int]:
-    """Return the province_id for a capture, classifying if needed. Never
-    creates new provinces — unknown requests fall through to classification."""
-    # 1. Honor explicit request if it matches an existing canonical province.
+    """Return the province_id for a capture.
+
+    Order of operations:
+      1. Honor an explicit `requested` province when it matches a
+         canonical one (user knows best).
+      2. Weighted content-score classifier using title + summary +
+         body + optional compile-topic context. If the best province
+         has a confident score (≥3.0), commit.
+      3. Ask the LLM with the same rich context. Useful when keyword
+         heuristics are silent on novel domains (e.g. "Parapsychology"
+         doesn't trip any keyword in Natural Sciences, but the LLM
+         will happily put it there or in Philosophy).
+      4. Last resort: Miscellaneous — never Curiosities, which is
+         reserved for explicit "strange" picks."""
     if requested:
         row = db.execute(
             "SELECT id FROM provinces WHERE slug = ? OR lower(name) = lower(?)",
@@ -2756,18 +2838,21 @@ async def resolve_province(
         if row:
             return row["id"]
 
-    # 2. Keyword heuristic on the article text.
-    pick = classify_by_keyword(title, summary)
+    scored = classify_by_content(title, summary, body_text, topic_context)
+    pick = scored[0] if scored else None
+    if pick:
+        log.info("classify: '%s' -> %s (score=%.1f, context='%s')",
+                 title, pick, scored[1], topic_context or "—")
 
-    # 3. Ask the local LLM if heuristics were silent.
     if not pick:
-        pick = await classify_by_llm(title, summary)
+        pick = await classify_by_llm(title, summary, body_text, topic_context)
+        if pick:
+            log.info("classify: '%s' -> %s (llm, context='%s')",
+                     title, pick, topic_context or "—")
 
-    # 4. Last resort: Miscellaneous (pure uncategorized catch-all;
-    # Curiosities is reserved for the semantically "strange" — only reached
-    # via explicit request or LLM pick).
     if not pick:
         pick = "Miscellaneous"
+        log.info("classify: '%s' -> Miscellaneous (no signal)", title)
 
     row = db.execute(
         "SELECT id FROM provinces WHERE lower(name) = lower(?)", (pick,)
@@ -2782,6 +2867,11 @@ class CaptureReq(BaseModel):
     wikipedia_title: Optional[str] = None
     opening_marginalia: Optional[str] = None
     subheading: Optional[str] = None
+    # Optional context that helps classify the article. Compile passes
+    # its own topic here so auto-captured chapters land in the province
+    # most relevant to the *study*, not whatever the article in
+    # isolation would suggest.
+    topic_context: Optional[str] = None
 
 
 @app.post("/api/capture")
@@ -2825,10 +2915,17 @@ async def api_capture(req: CaptureReq):
 
     # Province — always classified into the canonical static set.
     # Explicit req.province is honored iff it matches an existing province;
-    # otherwise we classify by keyword, then LLM, then Curiosities.
+    # otherwise we run the weighted content classifier (title + summary
+    # + first ~3k words of the body + optional compile topic) then the
+    # LLM, then Miscellaneous.
     with get_db() as db:
         province_id = await resolve_province(
-            db, req.province, resolved_title, summary.get("extract", "")
+            db,
+            req.province,
+            resolved_title,
+            summary.get("extract", ""),
+            body_text=text,
+            topic_context=(req.topic_context or "").strip(),
         )
 
         cur = db.execute("""
