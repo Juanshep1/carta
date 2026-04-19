@@ -518,7 +518,8 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
                       timeout: float = 180,
                       provider: Optional[str] = None,
                       model: Optional[str] = None,
-                      _allow_fallback: bool = True) -> str:
+                      _allow_fallback: bool = True,
+                      _length_retries: int = 2) -> str:
     base_url, chosen_model, headers = resolve_provider(provider, model)
     payload: dict[str, Any] = {
         "model": chosen_model,
@@ -575,9 +576,33 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     except Exception as e:
         raise OllamaError(502, f"{chosen_model}: invalid JSON response — {e}", model=chosen_model) from e
 
-    reply = data.get("message", {}).get("content", "")
+    msg = data.get("message", {}) or {}
+    reply = msg.get("content", "") or ""
     # strip <think> blocks some models emit
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+
+    # Reasoning models (gpt-oss, deepseek, kimi) sometimes burn the entire
+    # num_predict budget on a `"thinking"` field and emit content="". When
+    # done_reason is "length" and content is empty, retry with double the
+    # token budget. Independent of _allow_fallback so the retry still fires
+    # even when we're inside a cloud-fallback call (the original reason we
+    # got here).
+    done_reason = data.get("done_reason") or ""
+    has_thinking = bool((msg.get("thinking") or "").strip())
+    if (_length_retries > 0 and not reply and has_thinking
+            and done_reason == "length"
+            and max_tokens < 2000):
+        doubled = min(max_tokens * 2, 2000)
+        log.info("ollama: '%s' ran out of tokens on thinking phase "
+                 "(done_reason=length); retrying at num_predict=%d",
+                 chosen_model, doubled)
+        return await ollama_chat(
+            messages, temperature=temperature, format_json=format_json,
+            max_tokens=doubled, timeout=timeout,
+            provider=provider, model=model,
+            _allow_fallback=_allow_fallback,
+            _length_retries=_length_retries - 1,
+        )
 
     # Some cloud SKUs (notably gpt-oss:20b on certain prompts) happily
     # return HTTP 200 with an empty content body — there's no error to
