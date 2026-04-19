@@ -1030,6 +1030,558 @@ class CompileReq(BaseModel):
     format: str = "epub"             # "epub" | "html"
     target_articles: int = 8
     auto_expand: bool = True
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+# English stopwords we strip from topic needles so "the french revolution"
+# actually ranks by "french" + "revolution", not by how many articles happen
+# to contain the word "the".
+_COMPILE_STOPWORDS = {
+    "the", "a", "an", "and", "or", "of", "in", "on", "to", "for", "with",
+    "is", "was", "are", "were", "be", "been", "as", "at", "by", "from",
+    "how", "what", "why", "this", "that", "these", "those", "it", "its",
+    "into", "about", "over", "under", "up", "down", "between",
+}
+
+
+def _compile_needles(topic: str) -> list[str]:
+    return [w for w in re.findall(r"\w+", topic.lower())
+            if len(w) >= 3 and w not in _COMPILE_STOPWORDS]
+
+
+def _compile_rank(topic: str, corpus: list[dict]) -> list[tuple[float, dict]]:
+    """Weighted scorer that strongly prefers title matches over summary
+    fuzz. Returns list of (score, article) sorted descending. Articles with
+    zero matches never appear — no more padding with unrelated entries."""
+    needles = _compile_needles(topic)
+    if not needles:
+        return []
+
+    def score(a: dict) -> float:
+        title = (a.get("title") or "").lower()
+        deck = (a.get("deck") or "").lower()
+        summary = (a.get("summary") or "").lower()
+        province = (a.get("province_name") or "").lower()
+        wiki_title = (a.get("wiki_title") or "").lower()
+        hits = 0.0
+        for n in needles:
+            if n in title or n in wiki_title:
+                hits += 3.0
+            if n in deck:
+                hits += 1.5
+            if n in summary:
+                hits += 1.0
+            if n in province:
+                hits += 0.8
+        # Multi-needle bonus: rewards articles that hit several aspects
+        # of a compound topic ("roman empire" → both "roman" + "empire").
+        matched = sum(1 for n in needles if n in (title + " " + deck + " "
+                                                  + summary + " " + province
+                                                  + " " + wiki_title))
+        if len(needles) >= 2 and matched >= 2:
+            hits *= 1.4
+        return hits
+
+    scored = [(score(a), a) for a in corpus]
+    scored = [(s, a) for s, a in scored if s >= 2.0]   # strict threshold
+    scored.sort(key=lambda sa: -sa[0])
+    return scored
+
+
+async def _parallel_auto_expand(topic: str,
+                                existing_slugs: set[str],
+                                existing_titles_lower: set[str],
+                                needed: int,
+                                max_concurrent: int = 5
+                                ) -> list[str]:
+    """Run up to `needed` Wikipedia captures in parallel (capped at
+    `max_concurrent`). Parallel is what keeps us under Tailscale Funnel's
+    ~60s request cap even when auto-expand has real work to do."""
+    if needed <= 0:
+        return []
+    candidates = await _wiki_related_titles(topic, limit=needed * 4)
+    picks: list[str] = []
+    for title in candidates:
+        if title.lower() in existing_titles_lower:
+            continue
+        picks.append(title)
+        if len(picks) >= min(needed, max_concurrent):
+            break
+
+    async def _one(title: str) -> Optional[str]:
+        try:
+            r = await api_capture(CaptureReq(topic=title, wikipedia_title=title))
+        except HTTPException as e:
+            log.info("compile: capture '%s' skipped (%d): %s",
+                     title, e.status_code, e.detail)
+            return None
+        except Exception as e:
+            log.info("compile: capture '%s' errored: %s", title, e)
+            return None
+        slug = r.get("slug")
+        return slug if (slug and slug not in existing_slugs) else None
+
+    results = await asyncio.gather(*(_one(t) for t in picks))
+    return [s for s in results if s]
+
+
+async def _generate_curriculum(topic: str,
+                               articles: list[dict],
+                               provider: Optional[str],
+                               model: Optional[str]) -> dict:
+    """One LLM call that returns the entire course structure — book title,
+    intro, conclusion, and per-chapter metadata. Returning None on failure
+    tells the caller to fall back to plain bookshelf mode."""
+    menu = "\n".join(
+        f"{i+1}. [{a.get('slug')}] {a.get('title')} — "
+        f"{(a.get('deck') or a.get('summary') or '')[:240]}"
+        for i, a in enumerate(articles)
+    )
+    n = len(articles)
+    system = (
+        "You design short, cohesive learning books for a personal wiki. "
+        "Given a topic and exactly N source articles, return ONLY JSON — "
+        "no prose before or after. Shape:\n"
+        "{\n"
+        '  "book_title": "A Short Course in ...",\n'
+        '  "subtitle": "short italicized line",\n'
+        '  "introduction": "1-2 paragraphs framing why this topic matters "\n'
+        '    "and how the chapters progress. ~140-200 words.",\n'
+        '  "conclusion": "1-2 paragraphs synthesizing the chapters and "\n'
+        '    "suggesting what to read next. ~120-180 words.",\n'
+        '  "chapters": [\n'
+        '    { "source_slug": "<from list>",\n'
+        '      "chapter_title": "question or statement framing the idea",\n'
+        '      "learning_objectives": ["3 bullets"],\n'
+        '      "key_takeaways": ["3 bullets"],\n'
+        '      "discussion_questions": ["2 open-ended questions"] }\n'
+        "  ]\n"
+        "}\n"
+        f"Exactly {n} chapters, ONE per source article, in an order that "
+        "reads as a curriculum (overview → deeper → synthesis). Chapter "
+        "titles should not simply repeat the Wikipedia article title — "
+        "reframe them around the concept the reader is learning. Objectives "
+        "and takeaways should be concrete and specific to this topic."
+    )
+    user = f"Topic: {topic}\n\nSources:\n{menu}"
+
+    try:
+        raw = await ollama_chat(
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            temperature=0.35, format_json=True, max_tokens=1600,
+            timeout=60,
+            provider=provider, model=model,
+        )
+    except OllamaError as e:
+        log.info("compile: curriculum LLM failed (%d): %s", e.status, e.message)
+        return None
+    except Exception as e:
+        log.info("compile: curriculum LLM errored: %s", e)
+        return None
+
+    raw = (raw or "").strip()
+    try:
+        data = json.loads(raw)
+    except Exception:
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return None
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            return None
+
+    if not isinstance(data, dict) or not isinstance(data.get("chapters"), list):
+        return None
+
+    # Index source articles so we can map chapter → article and also keep
+    # order-of-output. Fall back to positional order if slugs mismatch.
+    by_slug = {a.get("slug"): a for a in articles}
+    used: set[str] = set()
+    ordered: list[dict] = []
+    for ch in data["chapters"]:
+        if not isinstance(ch, dict):
+            continue
+        slug = ch.get("source_slug")
+        src = by_slug.get(slug) if slug else None
+        if not src:
+            # find the next unused article as a positional fallback
+            for a in articles:
+                if a.get("slug") not in used:
+                    src = a; break
+        if not src or src.get("slug") in used:
+            continue
+        used.add(src.get("slug"))
+        ordered.append({
+            "source": src,
+            "chapter_title": str(ch.get("chapter_title") or src.get("title") or ""),
+            "learning_objectives": [str(x) for x in (ch.get("learning_objectives") or [])][:5],
+            "key_takeaways": [str(x) for x in (ch.get("key_takeaways") or [])][:5],
+            "discussion_questions": [str(x) for x in (ch.get("discussion_questions") or [])][:4],
+        })
+
+    # Any sources the LLM skipped still get appended as bare-chapter entries
+    # so the chapter count honors the user's setting.
+    for a in articles:
+        if a.get("slug") in used:
+            continue
+        ordered.append({
+            "source": a,
+            "chapter_title": a.get("title") or "",
+            "learning_objectives": [],
+            "key_takeaways": [],
+            "discussion_questions": [],
+        })
+
+    return {
+        "book_title": str(data.get("book_title") or f"A Short Course in {topic}"),
+        "subtitle": str(data.get("subtitle") or ""),
+        "introduction": str(data.get("introduction") or ""),
+        "conclusion": str(data.get("conclusion") or ""),
+        "chapters": ordered,
+    }
+
+
+def _xhtml_esc(s: str) -> str:
+    return (str(s or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def _chapter_body_html(source: dict,
+                       objectives: list[str],
+                       takeaways: list[str],
+                       questions: list[str]) -> str:
+    """Wraps an article's content_html with curriculum shell: objectives
+    up top, then the source material, then takeaways + questions."""
+    raw = source.get("content_html") or f"<p>{_xhtml_esc(source.get('summary') or '')}</p>"
+    raw = re.sub(r"<script[\s\S]*?</script>", "", raw, flags=re.I)
+    raw = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", raw, flags=re.I)
+
+    def _ul(items: list[str]) -> str:
+        if not items: return ""
+        return "<ul>" + "".join(f"<li>{_xhtml_esc(x)}</li>" for x in items) + "</ul>"
+
+    pieces = []
+    if objectives:
+        pieces.append(
+            f'<section class="objectives"><h3>Learning Objectives</h3>{_ul(objectives)}</section>'
+        )
+    pieces.append(f'<section class="reading"><h3>Reading</h3>{raw}</section>')
+    if takeaways:
+        pieces.append(
+            f'<section class="takeaways"><h3>Key Takeaways</h3>{_ul(takeaways)}</section>'
+        )
+    if questions:
+        pieces.append(
+            f'<section class="questions"><h3>Discussion Questions</h3>'
+            f'<ol>{"".join(f"<li>{_xhtml_esc(q)}</li>" for q in questions)}</ol></section>'
+        )
+    return "\n".join(pieces)
+
+
+def _epub_from_curriculum(topic: str, course: dict) -> bytes:
+    """Like _epub_from_articles but emits a cohesive curriculum: titlepage,
+    introduction, chapter-per-source with learning shell, conclusion."""
+    book_title = _xhtml_esc(course.get("book_title") or f"A Short Course in {topic}")
+    subtitle = _xhtml_esc(course.get("subtitle") or "")
+    intro = course.get("introduction") or ""
+    concl = course.get("conclusion") or ""
+    chapters = course.get("chapters") or []
+
+    book_id = f"urn:uuid:{_uuid.uuid4()}"
+    container_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">\n'
+        '  <rootfiles>\n'
+        '    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>\n'
+        '  </rootfiles>\n'
+        '</container>\n'
+    )
+    stylesheet = (
+        "@page { margin: 6% 6%; }\n"
+        "body { font-family: 'EB Garamond', Georgia, serif; line-height: 1.62; color: #1a1410; }\n"
+        "h1 { font-family: 'Fraunces', Georgia, serif; font-weight: 500; "
+        "     margin: 0 0 0.2em 0; font-size: 1.9em; color: #1a1410; }\n"
+        "h2 { font-family: 'Fraunces', Georgia, serif; font-size: 1.4em; "
+        "     border-bottom: 1px solid rgba(26,20,16,0.2); padding-bottom: 0.15em; "
+        "     margin-top: 1.6em; }\n"
+        "h3 { font-family: 'Fraunces', Georgia, serif; font-size: 1.05em; "
+        "     text-transform: uppercase; letter-spacing: 0.16em; color: #7a1f1f; "
+        "     margin: 1.4em 0 0.4em; font-weight: 500; }\n"
+        ".kicker { color: #7a1f1f; font-family: 'IBM Plex Mono', monospace; "
+        "          letter-spacing: 0.18em; text-transform: uppercase; "
+        "          font-size: 0.7em; margin-bottom: 0.6em; }\n"
+        ".subtitle { font-style: italic; color: #3a2f27; margin-bottom: 1.4em; }\n"
+        "ul, ol { margin: 0.4em 0 1em 1.3em; }\n"
+        "li { margin: 0.3em 0; }\n"
+        "p { margin: 0.7em 0; }\n"
+        "a { color: #7a1f1f; text-decoration: none; }\n"
+        "blockquote { border-left: 2px solid #7a1f1f; padding: 0.2em 0.9em; "
+        "             font-style: italic; color: #3a2f27; margin: 1em 0; }\n"
+        "img { max-width: 100%; height: auto; display: block; margin: 1em auto; }\n"
+        ".objectives, .takeaways, .questions {\n"
+        "  background: rgba(155,122,46,0.06); padding: 0.8em 1.1em; margin: 1em 0;\n"
+        "  border-left: 2px solid rgba(155,122,46,0.5); }\n"
+        ".reading h3 { border-bottom: 1px solid rgba(26,20,16,0.15); "
+        "              padding-bottom: 0.3em; }\n"
+    )
+
+    manifest_items = [
+        '<item id="style" href="style.css" media-type="text/css"/>',
+        '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
+        '<item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml"/>',
+        '<item id="intro" href="intro.xhtml" media-type="application/xhtml+xml"/>',
+        '<item id="concl" href="conclusion.xhtml" media-type="application/xhtml+xml"/>',
+    ]
+    spine_items = [
+        '<itemref idref="titlepage"/>',
+        '<itemref idref="intro"/>',
+    ]
+    nav_items = [
+        '<li><a href="intro.xhtml">Introduction</a></li>',
+    ]
+    files: list[tuple[str, str]] = []
+
+    titlepage_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en">'
+        f'<head><title>{book_title}</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body style="text-align:center; margin-top: 28%;">'
+        f'<p class="kicker">A CARTA Learning Book</p>'
+        f'<h1 style="font-size:2.6em;">{book_title}</h1>'
+        + (f'<p class="subtitle">{subtitle}</p>' if subtitle else '')
+        + f'<p style="color:#6d5e47;">{len(chapters)} chapters · compiled from your codex</p>'
+        '<p style="color:#7a1f1f; letter-spacing: 0.24em; font-size: 0.9em;">§</p>'
+        '</body></html>\n'
+    )
+    files.append(("titlepage.xhtml", titlepage_xhtml))
+
+    intro_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en">'
+        '<head><title>Introduction</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body><section>'
+        '<p class="kicker">Introduction</p>'
+        f'<h1>{book_title}</h1>'
+        + "".join(f"<p>{_xhtml_esc(p)}</p>" for p in intro.split("\n\n") if p.strip())
+        + '</section></body></html>\n'
+    )
+    files.append(("intro.xhtml", intro_xhtml))
+
+    for i, ch in enumerate(chapters, start=1):
+        src = ch["source"]
+        cid = f"ch{i:03d}"
+        fname = f"{cid}.xhtml"
+        chapter_title = _xhtml_esc(ch.get("chapter_title") or src.get("title") or "")
+        roman = _to_roman(i)
+        chapter_xhtml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
+            '<html xmlns="http://www.w3.org/1999/xhtml" lang="en">'
+            f'<head><title>{chapter_title}</title>'
+            '<link rel="stylesheet" href="style.css"/></head>'
+            '<body><section>'
+            f'<p class="kicker">Chapter {roman}</p>'
+            f'<h1>{chapter_title}</h1>'
+            + (f'<p class="subtitle">Based on: {_xhtml_esc(src.get("title") or "")}</p>'
+               if src.get("title") else "")
+            + _chapter_body_html(src,
+                                 ch.get("learning_objectives") or [],
+                                 ch.get("key_takeaways") or [],
+                                 ch.get("discussion_questions") or [])
+            + '</section></body></html>\n'
+        )
+        files.append((fname, chapter_xhtml))
+        manifest_items.append(
+            f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>'
+        )
+        spine_items.append(f'<itemref idref="{cid}"/>')
+        nav_items.append(f'<li><a href="{fname}">Chapter {roman}: {chapter_title}</a></li>')
+
+    concl_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="en">'
+        '<head><title>Conclusion</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body><section>'
+        '<p class="kicker">Conclusion</p>'
+        '<h1>Where to go from here</h1>'
+        + "".join(f"<p>{_xhtml_esc(p)}</p>" for p in concl.split("\n\n") if p.strip())
+        + '</section></body></html>\n'
+    )
+    files.append(("conclusion.xhtml", concl_xhtml))
+    spine_items.append('<itemref idref="concl"/>')
+    nav_items.append('<li><a href="conclusion.xhtml">Conclusion</a></li>')
+
+    nav_xhtml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" '
+        'xmlns:epub="http://www.idpf.org/2007/ops" lang="en">'
+        f'<head><title>{book_title} — Contents</title>'
+        '<link rel="stylesheet" href="style.css"/></head>'
+        '<body><nav epub:type="toc" id="toc"><h1>Contents</h1><ol>'
+        + "".join(nav_items)
+        + '</ol></nav></body></html>\n'
+    )
+    content_opf = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+        'unique-identifier="book-id" xml:lang="en">\n'
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
+        f'    <dc:identifier id="book-id">{book_id}</dc:identifier>\n'
+        f'    <dc:title>{book_title}</dc:title>\n'
+        '    <dc:language>en</dc:language>\n'
+        '    <dc:creator>CARTA — Personal Codex</dc:creator>\n'
+        f'    <meta property="dcterms:modified">{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</meta>\n'
+        '  </metadata>\n'
+        '  <manifest>\n    '
+        + "\n    ".join(manifest_items) +
+        '\n  </manifest>\n'
+        '  <spine>\n    '
+        + "\n    ".join(spine_items) +
+        '\n  </spine>\n'
+        '</package>\n'
+    )
+
+    buf = _io.BytesIO()
+    with _zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(_zipfile.ZipInfo("mimetype"),
+                    "application/epub+zip", compress_type=_zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", container_xml)
+        zf.writestr("OEBPS/content.opf", content_opf)
+        zf.writestr("OEBPS/nav.xhtml", nav_xhtml)
+        zf.writestr("OEBPS/style.css", stylesheet)
+        for fname, content in files:
+            zf.writestr(f"OEBPS/{fname}", content)
+    return buf.getvalue()
+
+
+def _to_roman(n: int) -> str:
+    numerals = [("M",1000),("CM",900),("D",500),("CD",400),
+                ("C",100),("XC",90),("L",50),("XL",40),
+                ("X",10),("IX",9),("V",5),("IV",4),("I",1)]
+    out, v = "", n
+    for sym, val in numerals:
+        while v >= val:
+            out += sym; v -= val
+    return out
+
+
+def _html_from_curriculum(topic: str, course: dict) -> str:
+    """Print-ready single HTML page with the same curriculum structure."""
+    book_title = _xhtml_esc(course.get("book_title") or f"A Short Course in {topic}")
+    subtitle = _xhtml_esc(course.get("subtitle") or "")
+    intro = course.get("introduction") or ""
+    concl = course.get("conclusion") or ""
+    chapters = course.get("chapters") or []
+
+    css = """
+    @page { size: letter; margin: 0.8in; }
+    html, body { margin: 0; padding: 0; background: #f1e8d3;
+                 font-family: "EB Garamond", Georgia, serif;
+                 color: #1a1410; line-height: 1.62; }
+    .hero { text-align: center; margin: 2.4em 0 3em; }
+    .hero .kicker { font-family: "IBM Plex Mono", monospace;
+                    letter-spacing: 0.28em; font-size: 11px;
+                    color: #7a1f1f; text-transform: uppercase; }
+    .hero h1 { font-family: "Fraunces", serif; font-weight: 400;
+               font-size: 46px; margin: 14px 0 6px; }
+    .hero .subtitle { font-style: italic; color: #3a2f27; }
+    .toc { margin: 2em 0 3em; padding: 1em 0;
+           border-top: 1px solid #c4a35a; border-bottom: 1px solid #c4a35a; }
+    .toc h2 { font-family: "Fraunces", serif; font-weight: 400; font-size: 18px;
+              letter-spacing: 0.24em; text-transform: uppercase;
+              color: #7a1f1f; margin: 0 0 14px; }
+    .toc ol { list-style: none; counter-reset: ch; padding: 0; }
+    .toc li { counter-increment: ch; padding: 4px 0;
+              display: flex; justify-content: space-between; gap: 10px; }
+    .toc li::before { content: counter(ch, upper-roman) "."; color: #9b7a2e;
+                      font-family: "Fraunces", serif; font-style: italic;
+                      min-width: 40px; }
+    .intro, .chapter, .conclusion { page-break-before: always; padding-top: 1em; }
+    .intro .kicker, .chapter .kicker, .conclusion .kicker {
+      font-family: "IBM Plex Mono", monospace; font-size: 10px;
+      letter-spacing: 0.22em; color: #7a1f1f; text-transform: uppercase; }
+    .chapter h1, .intro h1, .conclusion h1 {
+      font-family: "Fraunces", serif; font-weight: 500;
+      font-size: 32px; margin: 6px 0 4px; }
+    .chapter .subtitle { font-style: italic; color: #3a2f27; margin-bottom: 1.4em; }
+    .chapter h2, .intro h2 { font-family: "Fraunces", serif; font-size: 22px;
+                  font-weight: 500; border-bottom: 1px solid rgba(26,20,16,0.18);
+                  padding-bottom: 4px; margin-top: 1.8em; }
+    .chapter h3 { font-family: "Fraunces", serif; font-size: 14px;
+                  font-weight: 500; letter-spacing: 0.18em;
+                  text-transform: uppercase; color: #7a1f1f;
+                  margin: 1.4em 0 0.4em; }
+    .chapter p { margin: 0.7em 0; }
+    .chapter a { color: #7a1f1f; text-decoration: none; }
+    .objectives, .takeaways, .questions {
+      background: rgba(155,122,46,0.08); padding: 0.9em 1.2em; margin: 1em 0;
+      border-left: 2px solid rgba(155,122,46,0.5); }
+    img { max-width: 100%; height: auto; }
+    .print-button { position: fixed; top: 16px; right: 16px;
+                    padding: 10px 18px; background: #7a1f1f; color: #f1e8d3;
+                    font-family: "IBM Plex Mono", monospace; font-size: 11px;
+                    letter-spacing: 0.22em; text-transform: uppercase;
+                    border: 0; cursor: pointer; z-index: 100; }
+    @media print { .print-button { display: none; } }
+    """
+    toc = "".join(
+        f'<li><span>{_xhtml_esc(ch.get("chapter_title") or "")}</span>'
+        f'<span style="color:#6d5e47">{_xhtml_esc((ch.get("source") or {}).get("title") or "")}</span></li>'
+        for ch in chapters
+    )
+    intro_html = "".join(f"<p>{_xhtml_esc(p)}</p>" for p in intro.split("\n\n") if p.strip())
+    concl_html = "".join(f"<p>{_xhtml_esc(p)}</p>" for p in concl.split("\n\n") if p.strip())
+
+    chap_html = ""
+    for i, ch in enumerate(chapters, start=1):
+        src = ch["source"]
+        body = _chapter_body_html(src,
+                                  ch.get("learning_objectives") or [],
+                                  ch.get("key_takeaways") or [],
+                                  ch.get("discussion_questions") or [])
+        chap_html += f"""
+        <section class="chapter">
+          <div class="kicker">Chapter {_to_roman(i)}</div>
+          <h1>{_xhtml_esc(ch.get("chapter_title") or "")}</h1>
+          {f'<div class="subtitle">Based on: {_xhtml_esc(src.get("title") or "")}</div>' if src.get("title") else ""}
+          {body}
+        </section>
+        """
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+    <title>{book_title}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400..700;1,400..700&family=EB+Garamond:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>{css}</style></head><body>
+    <button class="print-button" onclick="window.print()">Save as PDF</button>
+    <div class="hero">
+      <div class="kicker">A CARTA Learning Book</div>
+      <h1>{book_title}</h1>
+      {f'<div class="subtitle">{subtitle}</div>' if subtitle else ''}
+      <div style="color:#6d5e47;font-style:italic;margin-top:6px">
+        {len(chapters)} chapters · compiled from your codex
+      </div>
+    </div>
+    <section class="toc"><h2>Contents</h2><ol>{toc}</ol></section>
+    <section class="intro">
+      <div class="kicker">Introduction</div>
+      <h1>{book_title}</h1>
+      {intro_html}
+    </section>
+    {chap_html}
+    <section class="conclusion">
+      <div class="kicker">Conclusion</div>
+      <h1>Where to go from here</h1>
+      {concl_html}
+    </section>
+    </body></html>"""
 
 
 @app.post("/api/compile")
@@ -1037,109 +1589,110 @@ async def api_compile(req: CompileReq):
     topic = (req.topic or "").strip()
     if not topic:
         raise HTTPException(400, "topic is required")
-    target = max(3, min(int(req.target_articles or 8), 20))
+    target = max(3, min(int(req.target_articles or 8), 12))  # LLM budget caps this
 
-    # Rank existing corpus by topic keyword. Reuses the same heuristic the
-    # quest endpoint uses so behavior matches user expectations.
+    # Strict relevance ranker — weighted, stopword-filtered, requires ≥2.0 score.
     with get_db() as db:
         rows = db.execute("""
             SELECT a.id, a.slug, a.title, a.deck, a.summary, a.content_html,
-                   a.captured_at, p.name AS province_name
+                   a.wiki_title, a.captured_at,
+                   p.name AS province_name, p.slug AS province_slug
               FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
         """).fetchall()
     corpus = [dict(r) for r in rows]
-    needles = [w for w in re.findall(r"\w{3,}", topic.lower()) if w]
+    scored = _compile_rank(topic, corpus)
+    relevant = [a for _s, a in scored][:target]
 
-    def score(a: dict) -> int:
-        blob = " ".join([
-            (a.get("title") or "").lower(),
-            (a.get("summary") or "").lower(),
-            (a.get("deck") or "").lower(),
-            (a.get("province_name") or "").lower(),
-        ])
-        return sum(1 for n in needles if n in blob)
-
-    scored = sorted([(score(a), a) for a in corpus], key=lambda sa: -sa[0])
-    relevant = [a for s, a in scored if s > 0][:target]
-
-    # Auto-expand: ask Wikipedia for relevance-ranked titles we don't already
-    # have, then run them through the capture pipeline. Capped at 3 new
-    # captures per compile call so the total wall-clock stays inside
-    # Tailscale Funnel's request timeout (~60s). A thin corpus still gets
-    # meaningfully filled; users who want more should capture manually or
-    # re-run compile a second time.
-    AUTO_EXPAND_CAP = 3
+    # Auto-expand — parallel, capped at 5 concurrent captures.
     added: list[str] = []
     if req.auto_expand and len(relevant) < target:
-        needed = min(target - len(relevant), AUTO_EXPAND_CAP)
+        needed = target - len(relevant)
         existing_slugs = {a["slug"] for a in corpus}
         existing_titles_lower = {(a.get("title") or "").lower() for a in corpus}
-        candidate_titles = await _wiki_related_titles(topic, limit=needed * 3)
-        for title in candidate_titles:
-            if len(added) >= needed:
-                break
-            if title.lower() in existing_titles_lower:
-                continue
-            try:
-                result = await api_capture(
-                    CaptureReq(topic=title, wikipedia_title=title)
-                )
-            except HTTPException as e:
-                log.info("compile: capture '%s' skipped (%d): %s",
-                         title, e.status_code, e.detail)
-                continue
-            except Exception as e:
-                log.info("compile: capture '%s' errored: %s", title, e)
-                continue
-            new_slug = result.get("slug")
-            if not new_slug or new_slug in existing_slugs:
-                continue
-            added.append(new_slug)
-            # Hydrate the newly-captured article for the compile list.
+        added = await _parallel_auto_expand(
+            topic, existing_slugs, existing_titles_lower,
+            needed=needed, max_concurrent=5,
+        )
+        if added:
+            # Re-read + re-rank so newly captured articles slot into the top.
             with get_db() as db:
-                new_row = db.execute("""
+                placeholders = ",".join("?" * len(added))
+                new_rows = db.execute(f"""
                     SELECT a.id, a.slug, a.title, a.deck, a.summary, a.content_html,
-                           a.captured_at, p.name AS province_name
+                           a.wiki_title, a.captured_at,
+                           p.name AS province_name, p.slug AS province_slug
                       FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
-                     WHERE a.slug = ?
-                """, (new_slug,)).fetchone()
-            if new_row:
-                relevant.append(dict(new_row))
+                     WHERE a.slug IN ({placeholders})
+                """, added).fetchall()
+            new_articles = [dict(r) for r in new_rows]
+            # Score and insert while preserving relevance ordering.
+            all_articles = relevant + new_articles
+            rescored = _compile_rank(topic, all_articles)
+            relevant = [a for _s, a in rescored][:target]
 
     if not relevant:
         raise HTTPException(
             409,
-            f"Nothing in the codex matches '{topic}' and auto-expand "
-            "couldn't capture anything new. Try a different topic.",
+            f"Nothing in the codex matches '{topic}' and auto-expand couldn't "
+            "find enough Wikipedia articles either. Try a different topic.",
         )
 
-    # Order chapters: introduction → deeper. For now, original relevance
-    # ranking puts the most on-topic first, which reads well as an opener.
+    # One LLM call → curriculum structure (book title, intro, conclusion,
+    # per-chapter objectives/takeaways/questions). Fallback to plain bookshelf
+    # mode if the LLM is unavailable or returns unparseable JSON.
+    course = await _generate_curriculum(
+        topic, relevant, provider=req.provider, model=req.model
+    )
+    fallback = course is None
+    if fallback:
+        # Minimal shell so the EPUB/HTML paths can still render.
+        course = {
+            "book_title": f"A Short Course in {topic}",
+            "subtitle": "compiled from your codex",
+            "introduction": (
+                f"This book gathers {len(relevant)} articles relevant to '{topic}' "
+                "into a single reading. The curriculum layer couldn't be generated — "
+                "treat each chapter as a standalone reading rather than a graded lesson."
+            ),
+            "conclusion": (
+                "To go deeper, open each source article from the Atlas and let "
+                "CARTA suggest related captures from the cross-references at the bottom."
+            ),
+            "chapters": [
+                {"source": a,
+                 "chapter_title": a.get("title") or "",
+                 "learning_objectives": [],
+                 "key_takeaways": [],
+                 "discussion_questions": []}
+                for a in relevant
+            ],
+        }
+
     filename_slug = slugify(topic) or "learning"
+    compiled_count = len(course["chapters"])
 
     if (req.format or "epub").lower() == "html":
-        html = _compile_html(topic, relevant)
+        html = _html_from_curriculum(topic, course)
         return Response(
             content=html,
             media_type="text/html; charset=utf-8",
             headers={
-                "Content-Disposition": f'inline; filename="{filename_slug}-learning.html"',
-                "X-Compiled-Count": str(len(relevant)),
+                "Content-Disposition": f'inline; filename="{filename_slug}-course.html"',
+                "X-Compiled-Count": str(compiled_count),
                 "X-Auto-Added": str(len(added)),
+                "X-Curriculum": "plain" if fallback else "llm",
             },
         )
 
-    # EPUB branch — reuse the province exporter's builder, masquerading
-    # the topic as a virtual "province" for the titlepage.
-    virtual_province = {"name": f"Learning · {topic}"}
-    data = _epub_from_articles(virtual_province, relevant)
+    data = _epub_from_curriculum(topic, course)
     return Response(
         content=data,
         media_type="application/epub+zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename_slug}-learning.epub"',
-            "X-Compiled-Count": str(len(relevant)),
+            "Content-Disposition": f'attachment; filename="{filename_slug}-course.epub"',
+            "X-Compiled-Count": str(compiled_count),
             "X-Auto-Added": str(len(added)),
+            "X-Curriculum": "plain" if fallback else "llm",
         },
     )
 
