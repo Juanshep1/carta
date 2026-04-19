@@ -2658,6 +2658,48 @@
     background: var(--oxblood);
   }
 
+  /* ---------- LISTEN BUTTON (article page) ---------- */
+  .listen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 7px 14px 7px 12px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  }
+  .listen-btn:hover {
+    border-color: var(--oxblood);
+    color: var(--oxblood);
+  }
+  .listen-btn[data-state="playing"] {
+    background: var(--oxblood);
+    border-color: var(--oxblood);
+    color: var(--parchment);
+  }
+  .listen-btn[data-state="paused"] {
+    border-color: var(--gilt);
+    color: var(--oxblood);
+  }
+  .listen-btn .listen-icon {
+    display: inline-flex;
+    line-height: 0;
+  }
+  .listen-btn[data-state="playing"] .listen-icon svg path {
+    animation: listen-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes listen-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.65; }
+  }
+
   /* ---------- COMPILE MODAL ---------- */
   .compile-modal {
     position: fixed; inset: 0;
@@ -4240,6 +4282,17 @@
       <div class="article-kicker" id="artKicker">—</div>
       <h1 class="article-title" id="artTitle">—</h1>
       <p class="article-deck" id="artDeck">—</p>
+      <button class="listen-btn" id="listenBtn" onclick="toggleReader()" type="button">
+        <span class="listen-icon" aria-hidden="true">
+          <!-- Speaker waves -->
+          <svg viewBox="0 0 16 16" width="14" height="14">
+            <path d="M3 6v4h2l3 3V3L5 6H3z" fill="currentColor"/>
+            <path d="M10 5a3 3 0 0 1 0 6" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linecap="round"/>
+            <path d="M12 3a5.5 5.5 0 0 1 0 10" stroke="currentColor" stroke-width="1.25" fill="none" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <span class="listen-label">Listen</span>
+      </button>
     </div>
     <dl class="article-meta-box" id="artMeta"></dl>
   </header>
@@ -4530,6 +4583,28 @@
           <select id="modelPicker" onchange="setModel(this.value)"></select>
         </div>
         <p class="engine-note" id="engineNote"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3>Voice Reader</h3>
+        <p class="engine-note">
+          Tap <em>Listen</em> on any article to have it read aloud. Uses your
+          browser's built-in voices — Safari on macOS/iOS pulls Apple's
+          Enhanced voices; Chrome on Windows uses Microsoft's Natural voices.
+        </p>
+        <div class="settings-field">
+          <label>Voice</label>
+          <select id="voicePicker" onchange="setVoice(this.value)"></select>
+        </div>
+        <div class="settings-field" style="display:flex;gap:10px;align-items:center">
+          <button type="button" class="btn" onclick="previewVoice()">Preview voice</button>
+          <label style="display:flex;gap:8px;align-items:center;cursor:pointer">
+            <input id="autoReadChat" type="checkbox" onchange="setAutoReadChat(this.checked)">
+            <span style="font-style:italic;color:var(--ink-soft);font-size:14px">
+              Read CARTA's replies aloud
+            </span>
+          </label>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -5345,6 +5420,9 @@ function appendCartaMsg(from, body, action) {
     </div>
   `);
   log.scrollTop = log.scrollHeight;
+  // Optional auto-read for CARTA replies — controlled by the toggle in
+  // Settings → Voice Reader. No-op when off.
+  if (from === "carta") { maybeReadChatReply(body); }
 }
 
 async function sendCarta() {
@@ -5701,6 +5779,9 @@ function openSettings() {
   $("settingsKey").value = CARTA.key || "";
   // Highlight active theme
   applyTheme(THEME.current, false);
+  // Refresh the voice picker — voices often load lazily on Chrome, so we
+  // re-enumerate each time Settings opens instead of relying on initial load.
+  populateVoicePicker();
   $("settingsModal").classList.add("open");
 }
 function closeSettings() { $("settingsModal").classList.remove("open"); }
@@ -5847,6 +5928,217 @@ function quizReset() {
   Quiz.questions = []; Quiz.idx = 0; Quiz.score = 0; Quiz.article = null;
   $("quizFinal").style.display = "none";
   $("quizStart").style.display = "grid";
+}
+
+// ---------- VOICE READER (speechSynthesis) ----------
+// Native browser TTS. On Safari (macOS/iOS) + modern Chrome/Edge the
+// built-in voices are pretty natural — Samantha / Alex on Apple, Jenny /
+// Guy Neural on Windows. No network calls, free.
+const Reader = {
+  queue: [],
+  idx: 0,
+  state: "idle",              // idle | playing | paused
+  articleTitle: "",
+  voicesLoaded: false,
+};
+
+function readerAvailable() {
+  return typeof window !== "undefined" && "speechSynthesis" in window;
+}
+
+function loadVoices() {
+  if (!readerAvailable()) return [];
+  const v = window.speechSynthesis.getVoices();
+  if (v.length) Reader.voicesLoaded = true;
+  return v;
+}
+
+function populateVoicePicker() {
+  const sel = $("voicePicker");
+  if (!sel) return;
+  const voices = loadVoices().filter(v => /^en/i.test(v.lang));
+  // Rank: put "natural / neural / premium / enhanced" voices first.
+  const score = v => {
+    const n = (v.name + " " + (v.voiceURI || "")).toLowerCase();
+    if (/neural|natural|premium|enhanced|siri/.test(n)) return 0;
+    return 1;
+  };
+  voices.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name));
+  const saved = localStorage.getItem("carta.voice.uri") || "";
+  sel.innerHTML =
+    '<option value="">Default (browser pick)</option>' +
+    voices.map(v => {
+      const tag = /neural|natural|premium|enhanced/i.test(v.name + (v.voiceURI || "")) ? " · Neural" : "";
+      return `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === saved ? "selected" : ""}>${escapeHtml(v.name)} (${escapeHtml(v.lang)})${tag}</option>`;
+    }).join("");
+  $("autoReadChat").checked = localStorage.getItem("carta.voice.autoReadChat") === "1";
+}
+
+function setVoice(uri) {
+  if (uri) localStorage.setItem("carta.voice.uri", uri);
+  else localStorage.removeItem("carta.voice.uri");
+}
+function setAutoReadChat(on) {
+  localStorage.setItem("carta.voice.autoReadChat", on ? "1" : "0");
+}
+function pickVoice() {
+  const uri = localStorage.getItem("carta.voice.uri") || "";
+  const voices = loadVoices();
+  if (uri) {
+    const m = voices.find(v => v.voiceURI === uri);
+    if (m) return m;
+  }
+  // Prefer any neural/natural/enhanced voice, then any en-US voice.
+  const enus = voices.filter(v => /^en-US/i.test(v.lang));
+  const preferred = enus.find(v => /neural|natural|premium|enhanced/i.test(v.name + (v.voiceURI || "")));
+  return preferred || enus[0] || voices[0] || null;
+}
+
+function stripHtmlForTTS(html) {
+  if (!html) return "";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  // Nuke scripts/styles; keep the rest as plain text.
+  doc.querySelectorAll("script,style,figure .thumbcaption small").forEach(n => n.remove());
+  let text = doc.body ? doc.body.textContent : html;
+  return (text || "").replace(/\s+/g, " ").trim();
+}
+
+function chunkText(text, max = 900) {
+  const out = [];
+  let buf = "";
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    if ((buf + " " + sentence).length > max && buf) {
+      out.push(buf.trim()); buf = sentence;
+    } else {
+      buf = buf ? buf + " " + sentence : sentence;
+    }
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out;
+}
+
+function speakChunk(i) {
+  if (i >= Reader.queue.length) { stopReader(); return; }
+  const utt = new SpeechSynthesisUtterance(Reader.queue[i]);
+  const v = pickVoice();
+  if (v) utt.voice = v;
+  utt.rate = 0.98;
+  utt.pitch = 1.0;
+  utt.volume = 1.0;
+  utt.onend = () => { if (Reader.state === "playing") speakChunk(i + 1); };
+  utt.onerror = () => { if (Reader.state === "playing") speakChunk(i + 1); };
+  Reader.idx = i;
+  window.speechSynthesis.speak(utt);
+}
+
+function startReading(text, title) {
+  if (!readerAvailable()) return;
+  stopReader();
+  Reader.queue = chunkText(text);
+  Reader.articleTitle = title || "";
+  if (!Reader.queue.length) return;
+  Reader.state = "playing";
+  updateListenBtn();
+  speakChunk(0);
+}
+
+function pauseReader() {
+  if (!readerAvailable()) return;
+  window.speechSynthesis.pause();
+  Reader.state = "paused";
+  updateListenBtn();
+}
+function resumeReader() {
+  if (!readerAvailable()) return;
+  window.speechSynthesis.resume();
+  Reader.state = "playing";
+  updateListenBtn();
+}
+function stopReader() {
+  if (!readerAvailable()) return;
+  window.speechSynthesis.cancel();
+  Reader.state = "idle";
+  Reader.queue = [];
+  Reader.idx = 0;
+  updateListenBtn();
+}
+
+function toggleReader() {
+  if (!readerAvailable()) {
+    toast("Your browser doesn't support speech synthesis.", "err");
+    return;
+  }
+  if (Reader.state === "playing") { pauseReader(); return; }
+  if (Reader.state === "paused")  { resumeReader(); return; }
+  // Idle — read the current article.
+  const title = $("artTitle") ? $("artTitle").textContent : "";
+  const deck = $("artDeck") ? $("artDeck").textContent : "";
+  const proseEl = $("artProse");
+  if (!proseEl) return;
+  const prose = stripHtmlForTTS(proseEl.innerHTML);
+  const full = [title, deck, prose].filter(Boolean).join(". ");
+  startReading(full, title);
+}
+
+function updateListenBtn() {
+  const btn = $("listenBtn");
+  if (!btn) return;
+  const label = btn.querySelector(".listen-label");
+  if (Reader.state === "playing") {
+    btn.setAttribute("data-state", "playing");
+    if (label) label.textContent = "Pause";
+  } else if (Reader.state === "paused") {
+    btn.setAttribute("data-state", "paused");
+    if (label) label.textContent = "Resume";
+  } else {
+    btn.removeAttribute("data-state");
+    if (label) label.textContent = "Listen";
+  }
+}
+
+// Auto-read CARTA chat replies when the toggle is on. Called from
+// appendCartaMsg via a lightweight hook below.
+function maybeReadChatReply(text) {
+  if (!readerAvailable()) return;
+  if (localStorage.getItem("carta.voice.autoReadChat") !== "1") return;
+  if (!text || !text.trim()) return;
+  // Strip *italic* markers so the voice doesn't read asterisks.
+  const cleaned = text.replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return;
+  const utt = new SpeechSynthesisUtterance(cleaned);
+  const v = pickVoice();
+  if (v) utt.voice = v;
+  utt.rate = 1.0;
+  // Don't cancel an in-flight article read.
+  window.speechSynthesis.speak(utt);
+}
+
+function previewVoice() {
+  if (!readerAvailable()) {
+    toast("Your browser doesn't support speech synthesis.", "err");
+    return;
+  }
+  const utt = new SpeechSynthesisUtterance(
+    "You can hear the voice CARTA will use to read your articles."
+  );
+  const v = pickVoice();
+  if (v) utt.voice = v;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utt);
+}
+
+// Stop reading when navigating away from an article view.
+window.addEventListener("hashchange", () => {
+  if (Reader.state !== "idle" && !location.hash.startsWith("#article/")) {
+    stopReader();
+  }
+});
+
+// Voice list often loads asynchronously on Chrome — re-populate when it fires.
+if (readerAvailable()) {
+  window.speechSynthesis.onvoiceschanged = populateVoicePicker;
+  // Also populate once up-front in case voices are already available.
+  setTimeout(populateVoicePicker, 50);
 }
 
 // ---------- COMPILE ----------
