@@ -573,15 +573,17 @@ async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
     # strip <think> blocks some models emit
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
 
-    # Some cloud SKUs (notably gpt-oss:20b on certain JSON-schema prompts)
-    # happily return HTTP 200 with an empty content body — there's no error
-    # to surface, but downstream JSON parsing will explode. Treat that as a
-    # retryable failure and hop to the fallback model, mirroring the 5xx path.
+    # Some cloud SKUs (notably gpt-oss:20b on certain prompts) happily
+    # return HTTP 200 with an empty content body — there's no error to
+    # surface, but the client gets back a silent empty bubble. Treat that
+    # as a retryable failure and hop to the fallback model, mirroring the
+    # 5xx path. Applies to both JSON and free-form prompts: chat hits this
+    # as often as quiz does.
     want_cloud = (provider or "").lower() == "cloud" and OLLAMA_CLOUD_KEY
-    if (_allow_fallback and want_cloud and format_json
+    if (_allow_fallback and want_cloud
             and not reply
             and chosen_model != CLOUD_FALLBACK_MODEL):
-        log.info("ollama cloud: '%s' returned 200 with empty JSON body; "
+        log.info("ollama cloud: '%s' returned 200 with empty body; "
                  "falling back to '%s'", chosen_model, CLOUD_FALLBACK_MODEL)
         return await ollama_chat(
             messages, temperature=temperature, format_json=format_json,
@@ -2056,6 +2058,17 @@ async def api_carta_chat(req: CartaChatReq):
     except Exception as e:
         log.error("ollama chat failed: %s", e)
         return {"reply": f"*CARTA is elsewhere — {e}.*", "error": True}
+
+    if not reply.strip():
+        # Both the requested model AND the fallback returned empty. Don't
+        # show an empty bubble — explain what's going on so the user knows
+        # to pick a different model.
+        log.warning("ollama chat returned empty reply (model=%s, provider=%s)",
+                    req.model, req.provider)
+        return {
+            "reply": "*The model returned an empty reply. Try a different model in Settings — some cloud SKUs go silent on free-tier quotas.*",
+            "error": True,
+        }
 
     with get_db() as db:
         db.execute("INSERT INTO carta_log (role, content) VALUES ('user', ?)", (req.message,))
