@@ -1262,14 +1262,14 @@ async def _search_commons_videos(title: str) -> list[dict]:
 
 
 async def _search_youtube(title: str) -> list[dict]:
-    """Returns up to 3 YouTube results for `title`. No-ops if
+    """Returns up to 6 YouTube results for `title`. No-ops if
     YOUTUBE_API_KEY isn't set (users without the key keep IA+Commons+LoC).
     Restricted to embeddable videos so the iframe player always works."""
     if not YOUTUBE_API_KEY:
         return []
     params = {
         "part": "snippet",
-        "maxResults": 3,
+        "maxResults": 6,
         "q": title,
         "type": "video",
         "videoEmbeddable": "true",
@@ -1425,16 +1425,27 @@ async def _fetch_article_videos(article: dict) -> list[dict]:
     )
     def _ok(r) -> list[dict]:
         return r if isinstance(r, list) else []
-    # Ordering inside the interleave determines tie-break when all sources
-    # have results: IA's curated archives first, then YouTube (usually the
-    # most populous), then Commons and LoC.
-    pools = [list(_ok(ia)), list(_ok(yt)), list(_ok(commons)), list(_ok(loc))]
+    # YouTube gets two slots per round (appears twice in the pool list) so
+    # it contributes more generously — users typically want a richer YT
+    # presence than Commons/LoC which are thin. Overall cap is 10 per
+    # article; fewer if some sources returned empty.
+    yt_pool = list(_ok(yt))
+    ia_pool = list(_ok(ia))
+    co_pool = list(_ok(commons))
+    lo_pool = list(_ok(loc))
+    pools = [ia_pool, yt_pool, co_pool, yt_pool, lo_pool]
     merged: list[dict] = []
-    CAP = 6
+    seen_ids: set[tuple[str, str]] = set()
+    CAP = 10
     while any(pools) and len(merged) < CAP:
         for pool in pools:
             if pool and len(merged) < CAP:
-                merged.append(pool.pop(0))
+                item = pool.pop(0)
+                key = (item.get("source", ""), item.get("id", ""))
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+                merged.append(item)
     return merged
 
 
@@ -1485,6 +1496,61 @@ async def api_article_videos(slug: str, refresh: bool = False):
         db.commit()
 
     return {"slug": slug, "videos": videos}
+
+
+# ---------- /api/watch/warm ----------
+# One-shot backfill that re-fetches every article whose cached payload is
+# either missing, stale (old sig), or empty. Useful right after adding a
+# new source (YouTube, LoC, whatever's next) so the aggregated Watch feed
+# has fresh material across the whole corpus without waiting for every
+# article to be opened manually.
+@app.post("/api/watch/warm")
+async def api_watch_warm(max: int = 40):
+    target_sig = _videos_cache_sig()
+    with get_db() as db:
+        article_rows = db.execute(
+            "SELECT id, slug, title FROM articles ORDER BY captured_at DESC"
+        ).fetchall()
+        stale: list[dict] = []
+        for r in article_rows:
+            cached = db.execute(
+                "SELECT payload FROM article_videos WHERE article_id = ?",
+                (r["id"],),
+            ).fetchone()
+            needs = True
+            if cached:
+                try:
+                    parsed = json.loads(cached["payload"])
+                    if (isinstance(parsed, dict)
+                            and parsed.get("sig") == target_sig):
+                        needs = False
+                except Exception:
+                    pass
+            if needs:
+                stale.append(dict(r))
+            if len(stale) >= max:
+                break
+
+    refreshed = 0
+    for r in stale:
+        videos = await _fetch_article_videos(r)
+        payload = json.dumps({"sig": target_sig, "videos": videos})
+        with get_db() as db:
+            db.execute("""
+                INSERT INTO article_videos (article_id, payload, fetched_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(article_id) DO UPDATE SET
+                  payload = excluded.payload, fetched_at = CURRENT_TIMESTAMP
+            """, (r["id"], payload))
+            db.commit()
+        refreshed += 1
+
+    return {
+        "target_sig": target_sig,
+        "total_articles": len(article_rows),
+        "stale_found": len(stale),
+        "refreshed": refreshed,
+    }
 
 
 # ---------- /api/watch ----------
