@@ -1119,38 +1119,57 @@ def _candidate_drift_score(title: str, topic: str) -> int:
 
 
 async def _article_matches_topic(slug: str, topic: str) -> bool:
-    """Quick DB lookup to verify an auto-captured article actually covers
-    the topic. Tests title/deck/summary for any stopword-filtered topic
-    needle; articles that share only the raw name (e.g. the band
-    Telekinesis for topic 'telekinesis') won't mention 'psychokinesis',
-    'parapsychology', 'psychic', etc. in the summary.
+    """Verify an auto-captured article actually covers the topic.
 
-    For single-word topics the check is lenient — we don't want to drop
-    'Cephalopod intelligence' from a topic of 'cephalopod'. For multi-
-    word topics we require at least one needle to hit."""
+    Three layers, cheapest first:
+      1. title/deck/summary contain the raw topic phrase → accept.
+      2. title/deck/summary contain a stopword-filtered topic needle
+         (multi-word topics: one hit is enough; single-word topics:
+         need content-body check too).
+      3. Article BODY contains the raw topic phrase or multiple needle
+         occurrences. This is what saves "Parapsychology" for a topic
+         of "telekinesis" — its summary uses the technical term
+         "psychokinesis" but the body explicitly discusses telekinesis.
+
+    The band/song/disambiguation articles that caused the original drift
+    never mention the topic anywhere in the body either, so they still
+    get dropped."""
     needles = _compile_needles(topic)
     if not needles:
         return True
     with get_db() as db:
         row = db.execute(
-            "SELECT title, deck, summary FROM articles WHERE slug = ?",
+            "SELECT title, deck, summary, content_html FROM articles WHERE slug = ?",
             (slug,),
         ).fetchone()
     if not row:
         return False
-    blob = " ".join([
+
+    topic_low = topic.lower()
+    meta_blob = " ".join([
         (row["title"] or "").lower(),
         (row["deck"] or "").lower(),
         (row["summary"] or "").lower(),
     ])
-    # The raw topic phrase itself, minus punctuation, is always a valid
-    # signal — handles "ancient egypt" where only the phrase matters.
-    if topic.lower() in blob:
+    if topic_low in meta_blob:
         return True
-    hits = sum(1 for n in needles if n in blob)
-    # Multi-word topics: at least one stopword-filtered needle must hit.
-    # Single-word topics: the raw word must hit (covered by topic.lower() check above).
-    return hits >= 1 if len(needles) >= 2 else False
+    meta_hits = sum(1 for n in needles if n in meta_blob)
+    if meta_hits >= 1 and len(needles) >= 2:
+        return True
+
+    # Body fallback — strip HTML for cheap substring matching.
+    raw_html = (row["content_html"] or "").lower()
+    body = re.sub(r"<[^>]+>", " ", raw_html)
+    body = re.sub(r"\s+", " ", body)
+    if topic_low in body:
+        return True
+    body_hits_any = sum(1 for n in needles if n in body)
+    if len(needles) >= 2:
+        return body_hits_any >= 1
+    # Single-word topic: require the word to appear at least twice in the
+    # body. One incidental mention isn't enough; two+ means the article
+    # genuinely covers it.
+    return body.count(needles[0]) >= 2
 
 
 async def _parallel_auto_expand(topic: str,
