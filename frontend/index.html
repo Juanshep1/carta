@@ -527,8 +527,8 @@
      theme-var colors so every one of the 12 palettes still works. */
   .hero {
     position: relative;
-    padding: 72px 28px 40px;
-    max-width: 1100px;
+    padding: 72px 48px 44px;
+    max-width: 1320px;
     margin: 0 auto;
     border-bottom: 1px solid var(--rule);
     text-align: center;
@@ -545,12 +545,12 @@
     opacity: 0.55;
     pointer-events: none;
   }
-  .hero::before { top: 20px; }
-  .hero::after { top: 26px; opacity: 0.22; }
+  .hero::before { top: 20px; left: 48px; right: 48px; }
+  .hero::after { top: 26px; opacity: 0.22; left: 48px; right: 48px; }
 
   .hero-frame {
     position: relative;
-    padding: 42px 24px 28px;
+    padding: 42px 48px 28px;
   }
   /* Bottom double-rule mirror */
   .hero-frame::before, .hero-frame::after {
@@ -604,12 +604,12 @@
     font-optical-sizing: auto;
     font-variation-settings: "opsz" 144, "SOFT" 30;
     font-weight: 300;
-    font-size: clamp(42px, 4.8vw, 68px);
+    font-size: clamp(52px, 5.8vw, 88px);
     line-height: 1.0;
-    letter-spacing: -0.018em;
+    letter-spacing: -0.02em;
     color: var(--ink);
-    margin: 0 auto 22px;
-    max-width: min(520px, 86vw);
+    margin: 0 auto 26px;
+    max-width: min(780px, 92vw);
     text-wrap: balance;
     text-align: left;
     position: relative;
@@ -653,12 +653,12 @@
 
   .hero-sub {
     font-family: var(--f-body);
-    font-size: clamp(17px, 1.4vw, 20px);
+    font-size: clamp(18px, 1.5vw, 22px);
     font-style: italic;
     color: var(--ink-soft);
-    max-width: 56ch;
-    line-height: 1.6;
-    margin: 26px auto 22px;
+    max-width: 62ch;
+    line-height: 1.55;
+    margin: 30px auto 26px;
     text-wrap: pretty;
   }
   .hero-sub::first-letter { color: var(--oxblood); font-weight: 500; }
@@ -699,10 +699,10 @@
      equal siblings with thin vertical dividers between them. */
   .hero-colophon {
     display: grid;
-    grid-template-columns: repeat(3, 1fr) 1.4fr;
+    grid-template-columns: repeat(3, 1fr) 1.5fr;
     margin: 8px auto 0;
-    max-width: 880px;
-    padding-top: 22px;
+    max-width: 1080px;
+    padding-top: 26px;
     border-top: 1px solid var(--rule);
     position: relative;
   }
@@ -744,7 +744,7 @@
     gap: 8px;
   }
   .hero-colophon dd .big {
-    font-size: clamp(34px, 3.8vw, 48px);
+    font-size: clamp(40px, 4.2vw, 56px);
     letter-spacing: -0.02em;
   }
   .hero-colophon dd small {
