@@ -39,6 +39,12 @@ FRONTEND_HTML = BASE.parent / "frontend" / "index.html"
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+# YouTube Data API v3 — set YOUTUBE_API_KEY to light up YouTube as a Watch
+# source. Free tier is 10k units/day; each search costs 100 units (~100
+# searches/day). Enable at https://console.cloud.google.com/apis →
+# YouTube Data API v3 → Credentials → API key. Leave blank to skip.
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "").strip()
+
 # Ollama Cloud (hosted): https://ollama.com — set OLLAMA_CLOUD_KEY to enable.
 OLLAMA_CLOUD_URL = os.environ.get("OLLAMA_CLOUD_URL", "https://ollama.com").rstrip("/")
 OLLAMA_CLOUD_KEY = os.environ.get("OLLAMA_CLOUD_KEY", "").strip()
@@ -1165,6 +1171,7 @@ async def _search_internet_archive(title: str) -> list[dict]:
             "description": desc,
             "creator": creator or "",
             "year": str(doc.get("year") or ""),
+            "embed_type": "iframe",
             "embed_url": f"https://archive.org/embed/{ident}",
             "page_url": f"https://archive.org/details/{ident}",
             "thumb_url": f"https://archive.org/services/img/{ident}",
@@ -1234,6 +1241,7 @@ async def _search_commons_videos(title: str) -> list[dict]:
             "description": "",
             "creator": info.get("user") or "",
             "year": "",
+            "embed_type": "video",
             "embed_url": url,                       # direct .webm/.ogv/.mp4
             "page_url": f"https://commons.wikimedia.org/wiki/{(page.get('title') or '').replace(' ', '_')}",
             "thumb_url": thumb,
@@ -1242,12 +1250,181 @@ async def _search_commons_videos(title: str) -> list[dict]:
     return out
 
 
+async def _search_youtube(title: str) -> list[dict]:
+    """Returns up to 3 YouTube results for `title`. No-ops if
+    YOUTUBE_API_KEY isn't set (users without the key keep IA+Commons+LoC).
+    Restricted to embeddable videos so the iframe player always works."""
+    if not YOUTUBE_API_KEY:
+        return []
+    params = {
+        "part": "snippet",
+        "maxResults": 3,
+        "q": title,
+        "type": "video",
+        "videoEmbeddable": "true",
+        "safeSearch": "strict",
+        "relevanceLanguage": "en",
+        "key": YOUTUBE_API_KEY,
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=VIDEO_QUERY_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
+            r = await client.get(
+                "https://www.googleapis.com/youtube/v3/search", params=params
+            )
+            if r.status_code != 200:
+                log.info("videos: YouTube search returned %d: %s",
+                         r.status_code, r.text[:200])
+                return []
+            items = r.json().get("items", [])
+    except Exception as e:
+        log.info("videos: YouTube search failed for '%s': %s", title, e)
+        return []
+
+    out: list[dict] = []
+    for it in items:
+        vid = (it.get("id") or {}).get("videoId")
+        sn = it.get("snippet") or {}
+        if not vid:
+            continue
+        thumbs = sn.get("thumbnails") or {}
+        thumb = ((thumbs.get("medium") or thumbs.get("high")
+                  or thumbs.get("default") or {}).get("url")) or ""
+        published = (sn.get("publishedAt") or "")[:4]
+        desc = re.sub(r"\s+", " ", sn.get("description") or "")[:280].strip()
+        out.append({
+            "source": "youtube",
+            "id": vid,
+            "title": sn.get("title") or vid,
+            "description": desc,
+            "creator": sn.get("channelTitle") or "",
+            "year": published,
+            "embed_type": "iframe",
+            # rel=0 hides "related videos from the rest of YouTube" at the end
+            # so the player doesn't bait users out of the codex.
+            "embed_url": f"https://www.youtube.com/embed/{vid}?rel=0&modestbranding=1",
+            "page_url": f"https://www.youtube.com/watch?v={vid}",
+            "thumb_url": thumb,
+            "attribution": "YouTube",
+        })
+    return out
+
+
+async def _search_library_of_congress(title: str) -> list[dict]:
+    """Returns up to 3 Library of Congress items with a playable video URL.
+    LoC is 100% free, no key, and its digitized-film catalog is unmatched
+    for archival material (WPA, early 20th-century newsreels, etc.)."""
+    params = {
+        "q": title,
+        "fo": "json",
+        "fa": "online-format:video",
+        "c": 10,
+        "sp": "1",
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=VIDEO_QUERY_TIMEOUT,
+            headers={"User-Agent": USER_AGENT},
+        ) as client:
+            r = await client.get("https://www.loc.gov/search/", params=params)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+    except Exception as e:
+        log.info("videos: LoC search failed for '%s': %s", title, e)
+        return []
+
+    def _pick_video_url(resources) -> Optional[str]:
+        """Walk LoC's nested `resources` structure looking for the first
+        direct .mp4 / .m3u8 URL. Schema is inconsistent across collections."""
+        if not isinstance(resources, list):
+            return None
+        for res in resources:
+            if not isinstance(res, dict):
+                continue
+            for key in ("video", "mp4", "m3u8"):
+                v = res.get(key)
+                if isinstance(v, str) and v.startswith("http"):
+                    return v
+            # Nested files[] of dicts with mimetype/url
+            for f_group in (res.get("files") or []):
+                if isinstance(f_group, list):
+                    for f in f_group:
+                        if isinstance(f, dict):
+                            mime = (f.get("mimetype") or "").lower()
+                            url = f.get("url") or ""
+                            if url.startswith("http") and (
+                                mime.startswith("video/")
+                                or url.lower().endswith((".mp4", ".m3u8", ".webm"))
+                            ):
+                                return url
+        return None
+
+    out: list[dict] = []
+    for item in data.get("results") or []:
+        video_url = _pick_video_url(item.get("resources"))
+        if not video_url:
+            continue
+        thumbs = item.get("image_url") or []
+        thumb = thumbs[0] if isinstance(thumbs, list) and thumbs else ""
+        if isinstance(thumb, str) and thumb.startswith("//"):
+            thumb = "https:" + thumb
+        raw_desc = item.get("description")
+        if isinstance(raw_desc, list):
+            raw_desc = raw_desc[0] if raw_desc else ""
+        desc = re.sub(r"<[^>]+>", "", str(raw_desc or ""))[:280].strip()
+        year = ""
+        for key in ("date", "dates"):
+            d = item.get(key)
+            if isinstance(d, list) and d:
+                year = str(d[0])[:4]; break
+            if isinstance(d, str) and d:
+                year = d[:4]; break
+        out.append({
+            "source": "library_of_congress",
+            "id": item.get("id") or video_url,
+            "title": item.get("title") or "Library of Congress item",
+            "description": desc,
+            "creator": "Library of Congress",
+            "year": year,
+            "embed_type": "video",
+            "embed_url": video_url,
+            "page_url": item.get("id") or "",
+            "thumb_url": thumb,
+            "attribution": "Library of Congress",
+        })
+        if len(out) >= 3:
+            break
+    return out
+
+
 async def _fetch_article_videos(article: dict) -> list[dict]:
+    """Merge results from all configured sources, interleaved so no single
+    source dominates. Runs searches in parallel — the whole fetch is bounded
+    by the slowest upstream, not the sum."""
     title = article.get("title") or ""
-    ia = await _search_internet_archive(title)
-    commons = await _search_commons_videos(title)
-    # IA first (usually richer metadata), then Commons. Cap at 5.
-    return (ia + commons)[:5]
+    ia, commons, yt, loc = await asyncio.gather(
+        _search_internet_archive(title),
+        _search_commons_videos(title),
+        _search_youtube(title),
+        _search_library_of_congress(title),
+        return_exceptions=True,
+    )
+    def _ok(r) -> list[dict]:
+        return r if isinstance(r, list) else []
+    # Ordering inside the interleave determines tie-break when all sources
+    # have results: IA's curated archives first, then YouTube (usually the
+    # most populous), then Commons and LoC.
+    pools = [list(_ok(ia)), list(_ok(yt)), list(_ok(commons)), list(_ok(loc))]
+    merged: list[dict] = []
+    CAP = 6
+    while any(pools) and len(merged) < CAP:
+        for pool in pools:
+            if pool and len(merged) < CAP:
+                merged.append(pool.pop(0))
+    return merged
 
 
 @app.get("/api/articles/{slug}/videos")

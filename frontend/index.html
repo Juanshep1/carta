@@ -2043,8 +2043,12 @@
     border-radius: 50%;
     background: var(--gilt);
   }
-  .watch-card .source-chip[data-source="wikimedia_commons"]::before {
+  .watch-card .source-chip[data-source="wikimedia_commons"]::before,
+  .watch-card .source-chip[data-source="youtube"]::before {
     background: var(--oxblood);
+  }
+  .watch-card .source-chip[data-source="library_of_congress"]::before {
+    background: var(--gilt);
   }
   .watch-card .title {
     font-family: var(--f-body);
@@ -4817,7 +4821,9 @@ function openVideo(v) {
   const meta = $("videoMeta");
   const modal = $("videoModal");
   if (!stage || !modal) return;
-  stage.innerHTML = v.source === "wikimedia_commons"
+  const embedType = v.embed_type
+    || (v.source === "wikimedia_commons" ? "video" : "iframe");
+  stage.innerHTML = embedType === "video"
     ? `<video controls playsinline autoplay preload="metadata"
               poster="${escapeHtml(v.thumb_url || "")}"
               src="${escapeHtml(v.embed_url)}"></video>`
