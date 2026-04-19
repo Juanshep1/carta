@@ -1118,25 +1118,43 @@ def _candidate_drift_score(title: str, topic: str) -> int:
     return drift
 
 
+_TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "telekinesis": ("psychokinesis",),
+    "psychokinesis": ("telekinesis",),
+    "telepathy": ("mind reading", "thought transference"),
+    "clairvoyance": ("remote viewing", "second sight"),
+    "esp": ("extrasensory perception", "psi"),
+    "ufo": ("unidentified flying object", "uap"),
+}
+
+
 async def _article_matches_topic(slug: str, topic: str) -> bool:
     """Verify an auto-captured article actually covers the topic.
 
-    Three layers, cheapest first:
-      1. title/deck/summary contain the raw topic phrase → accept.
-      2. title/deck/summary contain a stopword-filtered topic needle
-         (multi-word topics: one hit is enough; single-word topics:
-         need content-body check too).
-      3. Article BODY contains the raw topic phrase or multiple needle
-         occurrences. This is what saves "Parapsychology" for a topic
-         of "telekinesis" — its summary uses the technical term
-         "psychokinesis" but the body explicitly discusses telekinesis.
+    The drift-score ranker is the primary defense against parenthetical
+    disambiguations like 'Telekinesis (band)'. This function is a
+    post-capture backstop catching articles that reference the topic
+    only incidentally.
 
-    The band/song/disambiguation articles that caused the original drift
-    never mention the topic anywhere in the body either, so they still
-    get dropped."""
+    Strategy, cheapest first:
+      1. Meta blob (title/deck/summary) contains the topic phrase, any
+         stopword-filtered needle, or a known technical synonym → keep.
+      2. Body contains the topic/needle with real coverage: for
+         single-word topics, ≥3 absolute occurrences OR density
+         ≥1.0 hits per 1k words. For multi-word topics the phrase
+         itself or two distinct needles in the body is enough.
+
+    Calibration points (topic='telekinesis'):
+      Parapsychology   22 hits / 11k words = 2.00/1k → KEEP (via psychokinesis synonym)
+      Zapped (1982)     4 hits / 1.8k     = 2.19/1k → KEEP (absolute)
+      Betsy Braddock   13 hits / 14k     = 0.94/1k → KEEP (absolute)
+      Omega-level       1 hit  / 1.2k     = 0.83/1k → DROP
+      List of Boys chars 1 hit / 36k     = 0.03/1k → DROP"""
     needles = _compile_needles(topic)
     if not needles:
         return True
+    synonyms = _TOPIC_SYNONYMS.get(topic.lower().strip(), ())
+    expanded = list(needles) + list(synonyms)
     with get_db() as db:
         row = db.execute(
             "SELECT title, deck, summary, content_html FROM articles WHERE slug = ?",
@@ -1153,23 +1171,26 @@ async def _article_matches_topic(slug: str, topic: str) -> bool:
     ])
     if topic_low in meta_blob:
         return True
+    if any(syn in meta_blob for syn in synonyms):
+        return True
     meta_hits = sum(1 for n in needles if n in meta_blob)
     if meta_hits >= 1 and len(needles) >= 2:
         return True
 
-    # Body fallback — strip HTML for cheap substring matching.
     raw_html = (row["content_html"] or "").lower()
     body = re.sub(r"<[^>]+>", " ", raw_html)
     body = re.sub(r"\s+", " ", body)
-    if topic_low in body:
-        return True
-    body_hits_any = sum(1 for n in needles if n in body)
+    word_count = max(len(body.split()), 1)
+
     if len(needles) >= 2:
-        return body_hits_any >= 1
-    # Single-word topic: require the word to appear at least twice in the
-    # body. One incidental mention isn't enough; two+ means the article
-    # genuinely covers it.
-    return body.count(needles[0]) >= 2
+        if topic_low in body:
+            return True
+        return sum(1 for n in needles if n in body) >= 2
+
+    primary = needles[0]
+    total = body.count(primary) + sum(body.count(s) for s in synonyms)
+    density_per_1k = total / word_count * 1000
+    return total >= 3 or density_per_1k >= 1.0
 
 
 async def _parallel_auto_expand(topic: str,
