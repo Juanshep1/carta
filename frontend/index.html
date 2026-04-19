@@ -5615,10 +5615,11 @@ async function runCompile() {
       auto_expand: $("compileAuto").checked,
     };
     // api() uses JSON fetch; compile returns a binary/HTML body so we bypass
-    // it and go to fetch directly. Reuses CARTA.base + auth header.
-    const url = CARTA.base + "/api/compile";
+    // it and go to fetch directly. Reuses CARTA.base + the same key name
+    // the rest of the app uses (`carta_api_key`, not `carta.api_key`).
+    const url = cartaUrl("/api/compile");
     const headers = { "Content-Type": "application/json" };
-    const key = localStorage.getItem("carta.api_key");
+    const key = CARTA.key || localStorage.getItem("carta_api_key");
     if (key) headers["Authorization"] = "Bearer " + key;
     const r = await fetch(url, {
       method: "POST",

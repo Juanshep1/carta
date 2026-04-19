@@ -1063,11 +1063,15 @@ async def api_compile(req: CompileReq):
     relevant = [a for s, a in scored if s > 0][:target]
 
     # Auto-expand: ask Wikipedia for relevance-ranked titles we don't already
-    # have, then run them through the capture pipeline. Best-effort — each
-    # capture can take 10-30s, so we cap at `needed` new items.
+    # have, then run them through the capture pipeline. Capped at 3 new
+    # captures per compile call so the total wall-clock stays inside
+    # Tailscale Funnel's request timeout (~60s). A thin corpus still gets
+    # meaningfully filled; users who want more should capture manually or
+    # re-run compile a second time.
+    AUTO_EXPAND_CAP = 3
     added: list[str] = []
     if req.auto_expand and len(relevant) < target:
-        needed = target - len(relevant)
+        needed = min(target - len(relevant), AUTO_EXPAND_CAP)
         existing_slugs = {a["slug"] for a in corpus}
         existing_titles_lower = {(a.get("title") or "").lower() for a in corpus}
         candidate_titles = await _wiki_related_titles(topic, limit=needed * 3)
