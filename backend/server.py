@@ -25,7 +25,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1089,6 +1089,70 @@ def _compile_rank(topic: str, corpus: list[dict]) -> list[tuple[float, dict]]:
     return scored
 
 
+def _candidate_drift_score(title: str, topic: str) -> int:
+    """Deprioritize Wikipedia titles that clearly mean something other
+    than the topic. `(band)`, `(album)`, `(film)`, `(song)` etc. on top
+    of a topic like "telekinesis" indicate a disambiguation branch, not
+    the primary subject. 0 = probably the primary topic; higher = more
+    likely a detour. Tied 0-scores preserve Wikipedia's own order."""
+    low = title.lower()
+    topic_low = topic.lower()
+    drift = 0
+    if "(" in low and ")" in low:
+        inner = low[low.index("(") + 1 : low.index(")")]
+        # Pop-culture disambiguation suffixes that almost never mean the
+        # same thing as the bare topic word.
+        if any(kw in inner for kw in [
+            "band", "song", "album", "film", "movie", "tv series",
+            "tv show", "video game", "novel", "comic", "manga",
+            "rapper", "musician", "singer", "producer", "dj",
+        ]):
+            drift += 10
+        # "Smith (disambiguation)" style
+        if "disambiguation" in inner:
+            drift += 5
+    # Exact title match with the topic is a strong primary-topic signal.
+    bare = re.sub(r"\s*\([^)]*\)", "", low).strip()
+    if bare == topic_low:
+        drift -= 2
+    return drift
+
+
+async def _article_matches_topic(slug: str, topic: str) -> bool:
+    """Quick DB lookup to verify an auto-captured article actually covers
+    the topic. Tests title/deck/summary for any stopword-filtered topic
+    needle; articles that share only the raw name (e.g. the band
+    Telekinesis for topic 'telekinesis') won't mention 'psychokinesis',
+    'parapsychology', 'psychic', etc. in the summary.
+
+    For single-word topics the check is lenient — we don't want to drop
+    'Cephalopod intelligence' from a topic of 'cephalopod'. For multi-
+    word topics we require at least one needle to hit."""
+    needles = _compile_needles(topic)
+    if not needles:
+        return True
+    with get_db() as db:
+        row = db.execute(
+            "SELECT title, deck, summary FROM articles WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+    if not row:
+        return False
+    blob = " ".join([
+        (row["title"] or "").lower(),
+        (row["deck"] or "").lower(),
+        (row["summary"] or "").lower(),
+    ])
+    # The raw topic phrase itself, minus punctuation, is always a valid
+    # signal — handles "ancient egypt" where only the phrase matters.
+    if topic.lower() in blob:
+        return True
+    hits = sum(1 for n in needles if n in blob)
+    # Multi-word topics: at least one stopword-filtered needle must hit.
+    # Single-word topics: the raw word must hit (covered by topic.lower() check above).
+    return hits >= 1 if len(needles) >= 2 else False
+
+
 async def _parallel_auto_expand(topic: str,
                                 existing_slugs: set[str],
                                 existing_titles_lower: set[str],
@@ -1101,14 +1165,24 @@ async def _parallel_auto_expand(topic: str,
     Multiple batches cover the case where the first round under-fills
     because some titles 404 or resolve to articles already in the codex.
     Each batch fires up to `max_concurrent` requests concurrently to stay
-    inside Tailscale Funnel's ~60s request budget."""
+    inside Tailscale Funnel's ~60s request budget.
+
+    Pool ordering puts primary-topic titles first by applying a drift
+    score to Wikipedia's raw search output — so "Telekinesis" ranks
+    above "Telekinesis (band)" for a "telekinesis" topic. After each
+    capture we verify the article's summary actually covers the topic
+    before accepting it."""
     if needed <= 0:
         return []
 
     # Pull a generous pool so a second pass has something to try.
-    candidates = await _wiki_related_titles(topic, limit=max(needed * 4, 24))
-    pool = [t for t in candidates
-            if t.lower() not in existing_titles_lower]
+    candidates = await _wiki_related_titles(topic, limit=max(needed * 5, 30))
+    # Drop already-captured, then stable-sort by drift score so primary
+    # matches come first without disrupting Wikipedia's relevance order.
+    indexed = [(i, t) for i, t in enumerate(candidates)
+               if t.lower() not in existing_titles_lower]
+    indexed.sort(key=lambda it: (_candidate_drift_score(it[1], topic), it[0]))
+    pool = [t for _i, t in indexed]
 
     acquired: list[str] = []
     attempted_titles: set[str] = set()
@@ -1124,8 +1198,16 @@ async def _parallel_auto_expand(topic: str,
             log.info("compile: capture '%s' errored: %s", title, e)
             return None
         slug = r.get("slug")
-        return slug if (slug and slug not in existing_slugs
-                        and slug not in acquired) else None
+        if not slug or slug in existing_slugs or slug in acquired:
+            return None
+        # Verify the captured article actually covers the topic — Wikipedia
+        # search will happily return "Telekinesis (band)" for topic
+        # "telekinesis"; the summary is where the drift becomes obvious.
+        if not await _article_matches_topic(slug, topic):
+            log.info("compile: captured '%s' (from '%s') dropped as off-topic for '%s'",
+                     slug, title, topic)
+            return None
+        return slug
 
     # Up to 3 batches so we don't loop forever on pathological topics.
     for _batch_idx in range(3):
@@ -2795,6 +2877,106 @@ def api_marginalia(req: MargReq):
         )
         db.commit()
     return {"ok": True}
+
+
+# ---------- /api/tts ----------
+# Microsoft Edge's Natural voices (Aria, Jenny, Guy, Ryan, Sonia, Libby
+# and family) via the `edge-tts` library. Free, unauthenticated, genuinely
+# pleasant. Gives the browser a consistent high-quality voice that works
+# on any device, not just Apple hardware with the right download.
+#
+# Endpoint returns MP3 directly so <audio src="..."> can stream-play it.
+# A curated subset of voices is exposed by /api/tts/voices; the full
+# catalogue is ~400 voices across 100+ locales, which is overkill for a
+# personal wiki. Curation biased toward English neural voices that sound
+# good for long-form reading.
+
+# A curated list of Edge neural voices that read long-form text well.
+# Name → (voice_id, accent, character). Kept short so the picker doesn't
+# drown the user; the full catalogue (hundreds of voices) is still
+# available by passing an exact voice id.
+EDGE_TTS_VOICES: list[dict] = [
+    {"id": "en-US-AriaNeural",      "name": "Aria",      "accent": "American", "hint": "warm, articulate"},
+    {"id": "en-US-JennyNeural",     "name": "Jenny",     "accent": "American", "hint": "natural narrator"},
+    {"id": "en-US-GuyNeural",       "name": "Guy",       "accent": "American", "hint": "measured baritone"},
+    {"id": "en-US-DavisNeural",     "name": "Davis",     "accent": "American", "hint": "calm, thoughtful"},
+    {"id": "en-US-AmberNeural",     "name": "Amber",     "accent": "American", "hint": "clear and bright"},
+    {"id": "en-US-TonyNeural",      "name": "Tony",      "accent": "American", "hint": "confident"},
+    {"id": "en-GB-SoniaNeural",     "name": "Sonia",     "accent": "British",  "hint": "gentle RP"},
+    {"id": "en-GB-RyanNeural",      "name": "Ryan",      "accent": "British",  "hint": "crisp RP"},
+    {"id": "en-GB-LibbyNeural",     "name": "Libby",     "accent": "British",  "hint": "warm London"},
+    {"id": "en-IE-EmilyNeural",     "name": "Emily",     "accent": "Irish",    "hint": "lilting"},
+    {"id": "en-AU-NatashaNeural",   "name": "Natasha",   "accent": "Australian", "hint": "conversational"},
+    {"id": "en-AU-WilliamNeural",   "name": "William",   "accent": "Australian", "hint": "measured"},
+    {"id": "en-CA-ClaraNeural",     "name": "Clara",     "accent": "Canadian", "hint": "clean narrator"},
+    {"id": "en-IN-NeerjaNeural",    "name": "Neerja",    "accent": "Indian",   "hint": "articulate, neutral"},
+]
+
+
+@app.get("/api/tts/voices")
+def api_tts_voices():
+    """List the curated CARTA Premium voices the client can pick from."""
+    return {"voices": EDGE_TTS_VOICES, "default": "en-US-AriaNeural"}
+
+
+class TTSReq(BaseModel):
+    text: str
+    voice: Optional[str] = None
+    rate: Optional[str] = None      # e.g. "-10%" or "+15%"
+    pitch: Optional[str] = None     # e.g. "-5Hz" or "+2Hz"
+
+
+@app.post("/api/tts")
+async def api_tts(req: TTSReq):
+    """Synthesize `text` as MP3 via Microsoft Edge's Natural voice engine.
+    Streams the audio chunks back as the synthesizer produces them so
+    `<audio>` can start playing before the full file is ready."""
+    try:
+        import edge_tts  # local import — dep is optional at runtime
+    except ImportError:
+        raise HTTPException(
+            503,
+            "The 'edge-tts' package isn't installed on the backend. "
+            "Add it to requirements and restart."
+        )
+
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "text is required")
+    if len(text) > 20000:
+        # Guard: Edge's service has per-request caps; also keep Pi memory sane.
+        text = text[:20000]
+
+    voice = req.voice or "en-US-AriaNeural"
+    # Validate voice against the curated list OR accept the raw ID if it
+    # looks like a valid locale-VoiceName-Neural shape.
+    known_ids = {v["id"] for v in EDGE_TTS_VOICES}
+    if voice not in known_ids and not re.match(r"^[a-z]{2}-[A-Z]{2}-\w+Neural$", voice):
+        raise HTTPException(400, f"Unknown voice: {voice}")
+
+    communicate = edge_tts.Communicate(
+        text=text,
+        voice=voice,
+        rate=req.rate or "+0%",
+        pitch=req.pitch or "+0Hz",
+    )
+
+    async def audio_stream():
+        try:
+            async for chunk in communicate.stream():
+                if chunk.get("type") == "audio":
+                    yield chunk["data"]
+        except Exception as e:
+            log.info("tts: edge-tts stream failed: %s", e)
+
+    return StreamingResponse(
+        audio_stream(),
+        media_type="audio/mpeg",
+        headers={
+            "Cache-Control": "public, max-age=3600",
+            "X-Voice": voice,
+        },
+    )
 
 
 # ---------- /api/carta/models ----------

@@ -5940,6 +5940,12 @@ const Reader = {
   state: "idle",              // idle | playing | paused
   articleTitle: "",
   voicesLoaded: false,
+  // When a premium (backend) voice is selected we hand playback to an
+  // <audio> element instead of speechSynthesis. This field is populated
+  // at read-start time so pause/resume/stop know which engine to control.
+  mode: "local",              // "local" | "premium"
+  audioEl: null,
+  audioBlobURL: null,
 };
 
 function readerAvailable() {
@@ -5953,11 +5959,22 @@ function loadVoices() {
   return v;
 }
 
-function populateVoicePicker() {
+let PREMIUM_VOICES = null;   // cached /api/tts/voices response
+
+async function fetchPremiumVoices() {
+  if (PREMIUM_VOICES) return PREMIUM_VOICES;
+  try {
+    const r = await api("/api/tts/voices");
+    PREMIUM_VOICES = r.voices || [];
+    return PREMIUM_VOICES;
+  } catch { return []; }
+}
+
+async function populateVoicePicker() {
   const sel = $("voicePicker");
   if (!sel) return;
+
   const voices = loadVoices().filter(v => /^en/i.test(v.lang));
-  // Rank: put "natural / neural / premium / enhanced" voices first.
   const score = v => {
     const n = (v.name + " " + (v.voiceURI || "")).toLowerCase();
     if (/neural|natural|premium|enhanced|siri/.test(n)) return 0;
@@ -5965,12 +5982,25 @@ function populateVoicePicker() {
   };
   voices.sort((a, b) => score(a) - score(b) || a.name.localeCompare(b.name));
   const saved = localStorage.getItem("carta.voice.uri") || "";
+
+  // Premium voices come from the backend so we can offer consistently
+  // high-quality reading regardless of what the user's OS installed.
+  const premium = await fetchPremiumVoices();
+  const premiumOptions = premium.map(v =>
+    `<option value="premium:${escapeHtml(v.id)}" ${saved === "premium:" + v.id ? "selected" : ""}>
+       ${escapeHtml(v.name)} — ${escapeHtml(v.accent)} · ${escapeHtml(v.hint)}
+     </option>`).join("");
+
+  const deviceOptions = voices.map(v => {
+    const tag = /neural|natural|premium|enhanced/i.test(v.name + (v.voiceURI || "")) ? " · Neural" : "";
+    return `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === saved ? "selected" : ""}>${escapeHtml(v.name)} (${escapeHtml(v.lang)})${tag}</option>`;
+  }).join("");
+
   sel.innerHTML =
-    '<option value="">Default (browser pick)</option>' +
-    voices.map(v => {
-      const tag = /neural|natural|premium|enhanced/i.test(v.name + (v.voiceURI || "")) ? " · Neural" : "";
-      return `<option value="${escapeHtml(v.voiceURI)}" ${v.voiceURI === saved ? "selected" : ""}>${escapeHtml(v.name)} (${escapeHtml(v.lang)})${tag}</option>`;
-    }).join("");
+    '<option value="">Default (best available)</option>' +
+    (premium.length ? `<optgroup label="CARTA Premium — backend">${premiumOptions}</optgroup>` : "") +
+    (voices.length ? `<optgroup label="Device voices">${deviceOptions}</optgroup>` : "");
+
   $("autoReadChat").checked = localStorage.getItem("carta.voice.autoReadChat") === "1";
 }
 
@@ -6032,31 +6062,98 @@ function speakChunk(i) {
 }
 
 function startReading(text, title) {
-  if (!readerAvailable()) return;
   stopReader();
-  Reader.queue = chunkText(text);
   Reader.articleTitle = title || "";
-  if (!Reader.queue.length) return;
+  const saved = localStorage.getItem("carta.voice.uri") || "";
+  if (saved.startsWith("premium:")) {
+    startReadingPremium(text, saved.slice("premium:".length), title);
+  } else {
+    if (!readerAvailable()) return;
+    Reader.mode = "local";
+    Reader.queue = chunkText(text);
+    if (!Reader.queue.length) return;
+    Reader.state = "playing";
+    updateListenBtn();
+    speakChunk(0);
+  }
+}
+
+/// Backend-voice route: ask /api/tts for an MP3 of the full text and
+/// hand it to an <audio> element. Uses the same key-name for auth as the
+/// rest of the browser calls (`carta_api_key`).
+async function startReadingPremium(text, voiceID, title) {
+  Reader.mode = "premium";
   Reader.state = "playing";
   updateListenBtn();
-  speakChunk(0);
+  try {
+    // Cap text here too — matches backend's 20k limit.
+    const body = JSON.stringify({ text: text.slice(0, 20000), voice: voiceID });
+    const url = cartaUrl("/api/tts");
+    const headers = { "Content-Type": "application/json" };
+    const key = CARTA.key || localStorage.getItem("carta_api_key");
+    if (key) headers["Authorization"] = "Bearer " + key;
+    const r = await fetch(url, { method: "POST", headers, body });
+    if (!r.ok) throw new Error(`TTS ${r.status}`);
+    const blob = await r.blob();
+    const blobURL = URL.createObjectURL(blob);
+    const audio = new Audio(blobURL);
+    audio.addEventListener("ended",  () => { if (Reader.mode === "premium") stopReader(); });
+    audio.addEventListener("pause",  () => {
+      if (Reader.mode === "premium" && !audio.ended) {
+        Reader.state = "paused"; updateListenBtn();
+      }
+    });
+    audio.addEventListener("play",   () => {
+      if (Reader.mode === "premium") { Reader.state = "playing"; updateListenBtn(); }
+    });
+    audio.addEventListener("error",  () => {
+      toast("Couldn't play premium voice — falling back to device voice.", "err");
+      Reader.mode = "local";
+      stopReader();
+      startReading(text, title);
+    });
+    Reader.audioEl = audio;
+    Reader.audioBlobURL = blobURL;
+    audio.play();
+  } catch (e) {
+    toast("Premium voice failed — " + (e.message || e), "err");
+    Reader.mode = "local";
+    stopReader();
+  }
 }
 
 function pauseReader() {
+  if (Reader.mode === "premium" && Reader.audioEl) {
+    Reader.audioEl.pause();
+    return;
+  }
   if (!readerAvailable()) return;
   window.speechSynthesis.pause();
   Reader.state = "paused";
   updateListenBtn();
 }
 function resumeReader() {
+  if (Reader.mode === "premium" && Reader.audioEl) {
+    Reader.audioEl.play();
+    return;
+  }
   if (!readerAvailable()) return;
   window.speechSynthesis.resume();
   Reader.state = "playing";
   updateListenBtn();
 }
 function stopReader() {
-  if (!readerAvailable()) return;
-  window.speechSynthesis.cancel();
+  if (Reader.audioEl) {
+    try { Reader.audioEl.pause(); } catch {}
+    Reader.audioEl.src = "";
+    Reader.audioEl = null;
+  }
+  if (Reader.audioBlobURL) {
+    URL.revokeObjectURL(Reader.audioBlobURL);
+    Reader.audioBlobURL = null;
+  }
+  if (readerAvailable()) window.speechSynthesis.cancel();
+  Reader.mode = "local";
   Reader.state = "idle";
   Reader.queue = [];
   Reader.idx = 0;
@@ -6114,13 +6211,20 @@ function maybeReadChatReply(text) {
 }
 
 function previewVoice() {
+  const sample = "You can hear the voice CARTA will use to read your articles.";
+  const saved = localStorage.getItem("carta.voice.uri") || "";
+  if (saved.startsWith("premium:")) {
+    // Quick premium preview — bypasses the Reader state machine so it
+    // doesn't interrupt an in-progress article.
+    stopReader();
+    startReadingPremium(sample, saved.slice("premium:".length), "Preview");
+    return;
+  }
   if (!readerAvailable()) {
     toast("Your browser doesn't support speech synthesis.", "err");
     return;
   }
-  const utt = new SpeechSynthesisUtterance(
-    "You can hear the voice CARTA will use to read your articles."
-  );
+  const utt = new SpeechSynthesisUtterance(sample);
   const v = pickVoice();
   if (v) utt.voice = v;
   window.speechSynthesis.cancel();
