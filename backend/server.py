@@ -1089,23 +1089,36 @@ async def _search_internet_archive(title: str) -> list[dict]:
         log.info("videos: IA search failed for '%s': %s", title, e)
         return []
 
-    # Heuristics for "probably a curated item, not a random fan upload":
-    #  - download count ≥ 300 (signals sustained human interest, not a
-    #    2019 one-off someone forgot about)
-    #  - presence of year OR creator metadata (curated uploads fill these in)
-    #  - NOT exclusively in `opensource_movies`, the generic user-upload
-    #    bucket where the Stoicism-style shouty self-help videos live
+    # IA quality heuristics. We don't filter on downloads alone — the shouty
+    # fan uploads sometimes crack 300, and the Prelinger / newsandpublicaffairs
+    # items sometimes sit at 200. Instead:
+    #   1. Reject when EVERY collection is a known-noisy bucket (generic
+    #      user-upload pile, YouTube scrape, user favorites, etc.).
+    #   2. Rank survivors by downloads * curated_weight. An item with at
+    #      least one curated collection gets the full weight; an item with
+    #      only noisy collections (but not *all* — e.g. mixed) gets 0.1x.
+    # This lets the City-of-Longmont-at-210-downloads beat the shouty-fan-
+    # upload-at-276 when both survive the reject filter.
     NOISY_SOLE_COLLECTIONS = {
-        "opensource_movies", "opensource_audio", "community_video",
-        "community_media", "youtube",
+        "opensource_movies", "opensource_audio",
+        "community_video", "community_media",
+        "youtube",
+        # IA's YouTube/social scrape mirrors — where the shouty self-help
+        # Stoicism video lives.
+        "mirrortube", "social-media-video", "additional_collections_video",
+        # Fringe / deemphasize buckets IA uses for low-quality material.
+        "altcensored", "fringe", "deemphasize",
     }
-    MIN_DOWNLOADS = 300
+    # User-favorites collections are named `fav-<username>` — not curation.
+    def _is_noisy(c: str) -> bool:
+        c = c.lower()
+        return c in NOISY_SOLE_COLLECTIONS or c.startswith("fav-")
 
     def _as_list(x):
         if x is None: return []
         return x if isinstance(x, list) else [x]
 
-    def _score_doc(doc: dict) -> int | None:
+    def _score_doc(doc: dict) -> float | None:
         ident = doc.get("identifier")
         if not ident:
             return None
@@ -1113,14 +1126,19 @@ async def _search_internet_archive(title: str) -> list[dict]:
             downloads = int(doc.get("downloads") or 0)
         except (TypeError, ValueError):
             downloads = 0
-        collections = {str(c) for c in _as_list(doc.get("collection"))}
-        if collections and collections.issubset(NOISY_SOLE_COLLECTIONS):
-            return None
+        collections = [str(c) for c in _as_list(doc.get("collection"))]
+        if collections and all(_is_noisy(c) for c in collections):
+            return None   # every collection is noisy → drop entirely
+        has_curated = any(not _is_noisy(c) for c in collections)
         has_meta = bool(doc.get("year")) or bool(doc.get("creator"))
-        # Below the bar and no redeeming metadata → drop.
-        if downloads < MIN_DOWNLOADS and not has_meta:
+        # Still require some signal at the low end — a 10-download upload
+        # with a filled-in year is probably still noise.
+        if downloads < 50 and not has_meta:
             return None
-        return downloads
+        # Curated items get the full weight; half-noisy items get demoted
+        # so a curated 210-download lecture beats a noisy 276-download rant.
+        weight = 1.0 if has_curated else 0.1
+        return downloads * weight
 
     out: list[dict] = []
     scored = []
