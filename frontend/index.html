@@ -5946,6 +5946,16 @@ const Reader = {
   mode: "local",              // "local" | "premium"
   audioEl: null,
   audioBlobURL: null,
+  // Session token bumped on every start/stop so late-arriving network
+  // responses and <audio> 'error' events from a previous read can't
+  // stomp on the current read's state. Without this, a preview that
+  // errors half a second after you click Listen would hijack the
+  // article read with its own sample text.
+  session: 0,
+  abort: null,                 // AbortController for the current TTS fetch
+  premiumQueue: [],            // chunked paragraphs for premium mode
+  premiumIdx: 0,
+  premiumVoiceID: "",
 };
 
 function readerAvailable() {
@@ -6068,57 +6078,127 @@ function startReading(text, title) {
   if (saved.startsWith("premium:")) {
     startReadingPremium(text, saved.slice("premium:".length), title);
   } else {
-    if (!readerAvailable()) return;
-    Reader.mode = "local";
-    Reader.queue = chunkText(text);
-    if (!Reader.queue.length) return;
-    Reader.state = "playing";
-    updateListenBtn();
-    speakChunk(0);
+    startReadingLocal(text);
   }
 }
 
-/// Backend-voice route: ask /api/tts for an MP3 of the full text and
-/// hand it to an <audio> element. Uses the same key-name for auth as the
-/// rest of the browser calls (`carta_api_key`).
-async function startReadingPremium(text, voiceID, title) {
-  Reader.mode = "premium";
+// Native speechSynthesis path, factored out of startReading so premium
+// fallback can route here directly without re-reading the saved voice
+// and re-entering the premium flow (which is what caused the infinite
+// "falling back to device voice" loop).
+function startReadingLocal(text) {
+  if (!readerAvailable()) return;
+  Reader.mode = "local";
+  Reader.queue = chunkText(text);
+  if (!Reader.queue.length) return;
   Reader.state = "playing";
   updateListenBtn();
+  speakChunk(0);
+}
+
+/// Backend-voice route: chunk the article by paragraph and fetch one
+/// MP3 per chunk from /api/tts. Tailscale Funnel has a ~60 s request
+/// budget, so asking edge-tts for a whole 20 k-character article in a
+/// single call is flaky — the stream gets truncated and <audio> rejects
+/// the blob. Chunking keeps each request under a few seconds and lets
+/// playback start before all chunks are fetched.
+async function startReadingPremium(text, voiceID, title) {
+  const session = ++Reader.session;
+  Reader.mode = "premium";
+  Reader.state = "playing";
+  Reader.premiumQueue = chunkText(text, 600);
+  Reader.premiumIdx = 0;
+  Reader.premiumVoiceID = voiceID;
+  updateListenBtn();
+  if (!Reader.premiumQueue.length) { stopReader(); return; }
   try {
-    // Cap text here too — matches backend's 20k limit.
-    const body = JSON.stringify({ text: text.slice(0, 20000), voice: voiceID });
+    await playPremiumChunk(session, text);
+  } catch (e) {
+    if (session !== Reader.session) return;   // superseded — ignore
+    toast("Premium voice failed — falling back to device voice.", "err");
+    stopReader();
+    startReadingLocal(text);
+  }
+}
+
+async function playPremiumChunk(session, fullText) {
+  if (session !== Reader.session) return;
+  if (Reader.premiumIdx >= Reader.premiumQueue.length) { stopReader(); return; }
+  const piece = Reader.premiumQueue[Reader.premiumIdx];
+
+  // 45 s fetch ceiling — well under the funnel budget, long enough for
+  // a ~600-char paragraph even on a warm Pi.
+  Reader.abort?.abort();
+  Reader.abort = new AbortController();
+  const timer = setTimeout(() => Reader.abort?.abort(), 45_000);
+
+  let blob;
+  try {
+    const body = JSON.stringify({ text: piece, voice: Reader.premiumVoiceID });
     const url = cartaUrl("/api/tts");
     const headers = { "Content-Type": "application/json" };
     const key = CARTA.key || localStorage.getItem("carta_api_key");
     if (key) headers["Authorization"] = "Bearer " + key;
-    const r = await fetch(url, { method: "POST", headers, body });
+    const r = await fetch(url, { method: "POST", headers, body, signal: Reader.abort.signal });
+    if (session !== Reader.session) return;   // user cancelled / started something new
     if (!r.ok) throw new Error(`TTS ${r.status}`);
-    const blob = await r.blob();
-    const blobURL = URL.createObjectURL(blob);
-    const audio = new Audio(blobURL);
-    audio.addEventListener("ended",  () => { if (Reader.mode === "premium") stopReader(); });
-    audio.addEventListener("pause",  () => {
-      if (Reader.mode === "premium" && !audio.ended) {
-        Reader.state = "paused"; updateListenBtn();
-      }
-    });
-    audio.addEventListener("play",   () => {
-      if (Reader.mode === "premium") { Reader.state = "playing"; updateListenBtn(); }
-    });
-    audio.addEventListener("error",  () => {
-      toast("Couldn't play premium voice — falling back to device voice.", "err");
-      Reader.mode = "local";
+    blob = await r.blob();
+    if (!blob || blob.size < 256) throw new Error("empty audio response");
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (session !== Reader.session) return;
+
+  // Tear down the previous chunk's audio element & blob URL.
+  if (Reader.audioEl) { try { Reader.audioEl.pause(); } catch {} Reader.audioEl.src = ""; }
+  if (Reader.audioBlobURL) { URL.revokeObjectURL(Reader.audioBlobURL); Reader.audioBlobURL = null; }
+
+  const blobURL = URL.createObjectURL(blob);
+  const audio = new Audio(blobURL);
+  Reader.audioEl = audio;
+  Reader.audioBlobURL = blobURL;
+
+  audio.addEventListener("ended", () => {
+    // Guard: ignore stale events from an audio element that's no longer
+    // the current reader. Without this, an errored-out preview can
+    // hijack an in-progress article read.
+    if (session !== Reader.session || Reader.audioEl !== audio) return;
+    Reader.premiumIdx += 1;
+    if (Reader.premiumIdx >= Reader.premiumQueue.length) { stopReader(); return; }
+    playPremiumChunk(session, fullText).catch(() => {
+      if (session !== Reader.session) return;
+      toast("Premium voice dropped mid-read — switching to device voice.", "err");
+      const remaining = Reader.premiumQueue.slice(Reader.premiumIdx).join(" ");
       stopReader();
-      startReading(text, title);
+      startReadingLocal(remaining);
     });
-    Reader.audioEl = audio;
-    Reader.audioBlobURL = blobURL;
-    audio.play();
-  } catch (e) {
-    toast("Premium voice failed — " + (e.message || e), "err");
-    Reader.mode = "local";
+  });
+  audio.addEventListener("pause", () => {
+    if (session !== Reader.session || Reader.audioEl !== audio) return;
+    if (!audio.ended) { Reader.state = "paused"; updateListenBtn(); }
+  });
+  audio.addEventListener("play", () => {
+    if (session !== Reader.session || Reader.audioEl !== audio) return;
+    Reader.state = "playing"; updateListenBtn();
+  });
+  audio.addEventListener("error", () => {
+    if (session !== Reader.session || Reader.audioEl !== audio) return;
+    toast("Couldn't play premium voice — switching to device voice.", "err");
+    const remaining = Reader.premiumQueue.slice(Reader.premiumIdx).join(" ");
     stopReader();
+    startReadingLocal(remaining);
+  });
+
+  try {
+    await audio.play();
+  } catch {
+    // Autoplay blocked or decode error — bail to local synth once.
+    if (session !== Reader.session) return;
+    toast("Couldn't start premium audio — switching to device voice.", "err");
+    const remaining = Reader.premiumQueue.slice(Reader.premiumIdx).join(" ");
+    stopReader();
+    startReadingLocal(remaining);
   }
 }
 
@@ -6143,6 +6223,10 @@ function resumeReader() {
   updateListenBtn();
 }
 function stopReader() {
+  // Bump the session so any late-arriving fetches, audio 'error'/'ended'
+  // events or callbacks from the previous read are inert.
+  Reader.session += 1;
+  if (Reader.abort) { try { Reader.abort.abort(); } catch {} Reader.abort = null; }
   if (Reader.audioEl) {
     try { Reader.audioEl.pause(); } catch {}
     Reader.audioEl.src = "";
@@ -6157,6 +6241,9 @@ function stopReader() {
   Reader.state = "idle";
   Reader.queue = [];
   Reader.idx = 0;
+  Reader.premiumQueue = [];
+  Reader.premiumIdx = 0;
+  Reader.premiumVoiceID = "";
   updateListenBtn();
 }
 
@@ -6210,14 +6297,34 @@ function maybeReadChatReply(text) {
   window.speechSynthesis.speak(utt);
 }
 
-function previewVoice() {
+async function previewVoice() {
   const sample = "You can hear the voice CARTA will use to read your articles.";
   const saved = localStorage.getItem("carta.voice.uri") || "";
   if (saved.startsWith("premium:")) {
-    // Quick premium preview — bypasses the Reader state machine so it
-    // doesn't interrupt an in-progress article.
-    stopReader();
-    startReadingPremium(sample, saved.slice("premium:".length), "Preview");
+    // One-shot preview — don't touch the Reader state machine so it
+    // can't collide with an in-progress article read. Its <audio>
+    // element is local-scope and has no fallback: if it errors we
+    // just toast, we don't hijack the reader with the sample text.
+    try {
+      const body = JSON.stringify({ text: sample, voice: saved.slice("premium:".length) });
+      const url = cartaUrl("/api/tts");
+      const headers = { "Content-Type": "application/json" };
+      const key = CARTA.key || localStorage.getItem("carta_api_key");
+      if (key) headers["Authorization"] = "Bearer " + key;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      const r = await fetch(url, { method: "POST", headers, body, signal: controller.signal });
+      clearTimeout(timer);
+      if (!r.ok) throw new Error(`TTS ${r.status}`);
+      const blob = await r.blob();
+      if (!blob || blob.size < 256) throw new Error("empty audio");
+      const blobURL = URL.createObjectURL(blob);
+      const audio = new Audio(blobURL);
+      audio.addEventListener("ended", () => URL.revokeObjectURL(blobURL));
+      await audio.play();
+    } catch (e) {
+      toast("Preview failed — " + (e.message || e), "err");
+    }
     return;
   }
   if (!readerAvailable()) {
