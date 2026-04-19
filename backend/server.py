@@ -1055,11 +1055,16 @@ VIDEO_QUERY_TIMEOUT = 10
 
 
 async def _search_internet_archive(title: str) -> list[dict]:
-    """Returns up to 3 Internet Archive movie items matching `title`."""
+    """Returns up to 3 Internet Archive movie items matching `title`.
+    Applies a quality filter to sidestep the fan-upload noise in
+    `opensource_movies`: prefer items with real download counts and avoid
+    the hand-wave collections that tend to host shouty self-help uploads."""
+    # Over-fetch so we have candidates after filtering.
     params = {
         "q": f'title:("{title}") AND mediatype:movies',
-        "fl[]": ["identifier", "title", "description", "creator", "year"],
-        "rows": 3,
+        "fl[]": ["identifier", "title", "description", "creator", "year",
+                 "downloads", "collection"],
+        "rows": 12,
         "page": 1,
         "sort[]": "downloads desc",
         "output": "json",
@@ -1084,23 +1089,63 @@ async def _search_internet_archive(title: str) -> list[dict]:
         log.info("videos: IA search failed for '%s': %s", title, e)
         return []
 
-    out: list[dict] = []
-    for doc in (data.get("response", {}).get("docs") or []):
+    # Heuristics for "probably a curated item, not a random fan upload":
+    #  - download count ≥ 300 (signals sustained human interest, not a
+    #    2019 one-off someone forgot about)
+    #  - presence of year OR creator metadata (curated uploads fill these in)
+    #  - NOT exclusively in `opensource_movies`, the generic user-upload
+    #    bucket where the Stoicism-style shouty self-help videos live
+    NOISY_SOLE_COLLECTIONS = {
+        "opensource_movies", "opensource_audio", "community_video",
+        "community_media", "youtube",
+    }
+    MIN_DOWNLOADS = 300
+
+    def _as_list(x):
+        if x is None: return []
+        return x if isinstance(x, list) else [x]
+
+    def _score_doc(doc: dict) -> int | None:
         ident = doc.get("identifier")
         if not ident:
+            return None
+        try:
+            downloads = int(doc.get("downloads") or 0)
+        except (TypeError, ValueError):
+            downloads = 0
+        collections = {str(c) for c in _as_list(doc.get("collection"))}
+        if collections and collections.issubset(NOISY_SOLE_COLLECTIONS):
+            return None
+        has_meta = bool(doc.get("year")) or bool(doc.get("creator"))
+        # Below the bar and no redeeming metadata → drop.
+        if downloads < MIN_DOWNLOADS and not has_meta:
+            return None
+        return downloads
+
+    out: list[dict] = []
+    scored = []
+    for doc in (data.get("response", {}).get("docs") or []):
+        s = _score_doc(doc)
+        if s is None:
             continue
+        scored.append((s, doc))
+    scored.sort(key=lambda sd: sd[0], reverse=True)
+
+    for _score, doc in scored[:3]:
+        ident = doc["identifier"]
         raw_desc = doc.get("description")
         if isinstance(raw_desc, list):
             raw_desc = raw_desc[0] if raw_desc else ""
         desc = re.sub(r"<[^>]+>", "", str(raw_desc or ""))[:280].strip()
+        creator_raw = doc.get("creator")
+        creator = (creator_raw if isinstance(creator_raw, str)
+                   else (creator_raw[0] if isinstance(creator_raw, list) and creator_raw else ""))
         out.append({
             "source": "internet_archive",
             "id": ident,
             "title": str(doc.get("title") or ident),
             "description": desc,
-            "creator": (doc.get("creator") if isinstance(doc.get("creator"), str)
-                        else (doc.get("creator") or [""])[0] if isinstance(doc.get("creator"), list)
-                        else ""),
+            "creator": creator or "",
             "year": str(doc.get("year") or ""),
             "embed_url": f"https://archive.org/embed/{ident}",
             "page_url": f"https://archive.org/details/{ident}",
