@@ -3827,14 +3827,25 @@ async def api_carta_quiz(req: QuizReq):
             raise HTTPException(502, "Model returned malformed JSON twice; try another article.")
 
     questions: list[dict] = []
-    for q in (data.get("questions") or [])[:count]:
-        question = str(q.get("question") or "").strip()
-        options = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
+    # Tolerate two model-output shapes: the canonical dict-per-question
+    # and the lazy "array of strings" where the model dropped structure.
+    raw_qs = data.get("questions") if isinstance(data, dict) else data
+    if not isinstance(raw_qs, list):
+        raw_qs = []
+    for q in raw_qs[:count]:
+        if not isinstance(q, dict):
+            continue  # skip string entries — we can't reconstruct options
+        question = str(q.get("question") or q.get("q") or "").strip()
+        raw_opts = q.get("options") or q.get("choices") or []
+        if not isinstance(raw_opts, list):
+            continue
+        options = [str(o).strip() for o in raw_opts if str(o).strip()]
         try:
-            answer_index = int(q.get("answer_index", 0))
+            answer_index = int(q.get("answer_index",
+                                     q.get("answer", q.get("correct", 0))))
         except (TypeError, ValueError):
             answer_index = 0
-        explanation = str(q.get("explanation") or "").strip()
+        explanation = str(q.get("explanation") or q.get("rationale") or "").strip()
         if question and len(options) == 4 and 0 <= answer_index < 4:
             questions.append({
                 "question": question,
