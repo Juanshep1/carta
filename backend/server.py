@@ -2025,7 +2025,106 @@ def api_province(slug: str):
         return {"province": dict(p), "articles": articles}
 
 
+# ---------- /api/quote — daily positive quote for the hero section ----------
+# Rotates deterministically on day-of-year so every client gets the same quote
+# on the same day without needing a server-side scheduler. Curated to be
+# literary, non-saccharine, and CARTA-flavored (knowledge + curiosity leaning).
+DAILY_QUOTES: list[tuple[str, str]] = [
+    ("The larger the island of knowledge, the longer the shoreline of wonder.", "Ralph W. Sockman"),
+    ("I have no special talent. I am only passionately curious.", "Albert Einstein"),
+    ("The real voyage of discovery consists not in seeking new landscapes, but in having new eyes.", "Marcel Proust"),
+    ("We are what we repeatedly do. Excellence, then, is not an act, but a habit.", "Aristotle"),
+    ("The more I read, the more I acquire, the more certain I am that I know nothing.", "Voltaire"),
+    ("An investment in knowledge pays the best interest.", "Benjamin Franklin"),
+    ("Learn from yesterday, live for today, hope for tomorrow.", "Albert Einstein"),
+    ("The function of education is to teach one to think intensively and to think critically.", "Martin Luther King Jr."),
+    ("Anyone who stops learning is old, whether at twenty or eighty.", "Henry Ford"),
+    ("The beautiful thing about learning is that no one can take it away from you.", "B. B. King"),
+    ("Curiosity is the wick in the candle of learning.", "William Arthur Ward"),
+    ("The more that you read, the more things you will know.", "Dr. Seuss"),
+    ("Tell me and I forget. Teach me and I remember. Involve me and I learn.", "Benjamin Franklin"),
+    ("Knowledge is a treasure, but practice is the key to it.", "Lao Tzu"),
+    ("Wisdom begins in wonder.", "Socrates"),
+    ("Education is not the filling of a pail, but the lighting of a fire.", "W. B. Yeats"),
+    ("The only true wisdom is in knowing you know nothing.", "Socrates"),
+    ("Live as if you were to die tomorrow. Learn as if you were to live forever.", "Mahatma Gandhi"),
+    ("The art and science of asking questions is the source of all knowledge.", "Thomas Berger"),
+    ("Change is the end result of all true learning.", "Leo Buscaglia"),
+    ("Study the past if you would define the future.", "Confucius"),
+    ("The expert in anything was once a beginner.", "Helen Hayes"),
+    ("A book is a dream that you hold in your hand.", "Neil Gaiman"),
+    ("Reading is to the mind what exercise is to the body.", "Joseph Addison"),
+    ("The journey of a thousand miles begins with a single step.", "Lao Tzu"),
+    ("The only person you are destined to become is the person you decide to be.", "Ralph Waldo Emerson"),
+    ("In the middle of difficulty lies opportunity.", "Albert Einstein"),
+    ("It is during our darkest moments that we must focus to see the light.", "Aristotle"),
+    ("The mind is not a vessel to be filled, but a fire to be kindled.", "Plutarch"),
+    ("Nothing in life is to be feared, it is only to be understood.", "Marie Curie"),
+    ("Think before you speak. Read before you think.", "Fran Lebowitz"),
+    ("A room without books is like a body without a soul.", "Cicero"),
+    ("The beginning is the most important part of the work.", "Plato"),
+    ("To know, is to know that you know nothing. That is the meaning of true knowledge.", "Socrates"),
+    ("The only limit to our realization of tomorrow is our doubts of today.", "Franklin D. Roosevelt"),
+    ("A person who never made a mistake never tried anything new.", "Albert Einstein"),
+    ("Patience is bitter, but its fruit is sweet.", "Aristotle"),
+    ("Knowing yourself is the beginning of all wisdom.", "Aristotle"),
+    ("Do not go where the path may lead, go instead where there is no path.", "Ralph Waldo Emerson"),
+    ("The unexamined life is not worth living.", "Socrates"),
+    ("There is no friend as loyal as a book.", "Ernest Hemingway"),
+    ("One cannot think well, love well, sleep well, if one has not dined well.", "Virginia Woolf"),
+    ("I cannot live without books.", "Thomas Jefferson"),
+    ("The secret of getting ahead is getting started.", "Mark Twain"),
+    ("Whatever you are, be a good one.", "Abraham Lincoln"),
+    ("The only way to do great work is to love what you do.", "Steve Jobs"),
+    ("We cannot solve our problems with the same thinking we used when we created them.", "Albert Einstein"),
+    ("What we think, we become.", "Buddha"),
+    ("The future belongs to those who believe in the beauty of their dreams.", "Eleanor Roosevelt"),
+    ("Reading furnishes the mind only with materials of knowledge; it is thinking that makes what we read ours.", "John Locke"),
+    ("Without music, life would be a mistake.", "Friedrich Nietzsche"),
+    ("What is a teacher? I'll tell you: it isn't someone who teaches something, but someone who inspires the student.", "Paulo Coelho"),
+    ("All truths are easy to understand once they are discovered; the point is to discover them.", "Galileo Galilei"),
+    ("Doubt is the origin of wisdom.", "René Descartes"),
+    ("Well begun is half done.", "Aristotle"),
+    ("Knowledge has to be improved, challenged, and increased constantly, or it vanishes.", "Peter Drucker"),
+    ("History is the version of past events that people have decided to agree upon.", "Napoleon Bonaparte"),
+    ("The measure of intelligence is the ability to change.", "Albert Einstein"),
+    ("Everything you can imagine is real.", "Pablo Picasso"),
+    ("The roots of education are bitter, but the fruit is sweet.", "Aristotle"),
+    ("What you seek is seeking you.", "Rumi"),
+    ("Every artist was first an amateur.", "Ralph Waldo Emerson"),
+    ("The pen is mightier than the sword.", "Edward Bulwer-Lytton"),
+    ("Literature is the most agreeable way of ignoring life.", "Fernando Pessoa"),
+    ("I am still learning.", "Michelangelo"),
+]
+
+
+@app.get("/api/quote")
+def api_daily_quote():
+    """Return today's deterministic quote from the curated list.
+    Rotates on day-of-year so every client gets the same quote on the
+    same day; wraps around every ~365 days."""
+    day = time.gmtime().tm_yday
+    q, a = DAILY_QUOTES[day % len(DAILY_QUOTES)]
+    return {"text": q, "author": a, "day_of_year": day}
+
+
 # ---------- /api/articles ----------
+@app.get("/api/articles")
+def api_articles():
+    """Lightweight list of every captured article for picker UIs
+    (quiz, compile, move-to). Returns slug + title + province only —
+    no content_html, no summary — so the payload stays small even for
+    codexes with thousands of entries."""
+    with get_db() as db:
+        rows = db.execute("""
+            SELECT a.slug, a.title, a.deck, a.captured_at,
+                   p.name AS province_name
+              FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
+             ORDER BY a.title COLLATE NOCASE ASC
+        """).fetchall()
+    return {"articles": [dict(r) for r in rows], "total": len(rows)}
+
+
 @app.get("/api/articles/{slug}")
 def api_article(slug: str):
     with get_db() as db:
