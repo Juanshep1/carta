@@ -516,6 +516,178 @@ class OllamaError(Exception):
 CLOUD_FALLBACK_MODEL = "gpt-oss:20b"
 
 
+def _coerce_llm_json(raw: str) -> Optional[Any]:
+    """Parse LLM output as JSON, tolerating common malformations.
+
+    LLMs reliably break JSON in a handful of recurring ways even when
+    instructed to output strict JSON and the API is asked for
+    `format: json`:
+      1. Markdown fences: ```json ... ```
+      2. Prose prefix or suffix around the JSON
+      3. Smart quotes (“ ”) instead of ASCII double quotes
+      4. Trailing commas inside objects/arrays
+      5. Unescaped double quotes inside string values — the classic
+         "Expecting ',' delimiter" error users see
+      6. Truncated output (ran out of tokens mid-object)
+
+    Returns the parsed object or None if every repair attempt fails.
+    Never raises — the caller can decide whether to retry or error."""
+    if not raw:
+        return None
+    s = raw.strip()
+
+    # 1. Strip ```json ... ``` / ``` ... ``` fences
+    if s.startswith("```"):
+        first = s.find("\n")
+        if first != -1:
+            s = s[first + 1:]
+        if s.endswith("```"):
+            s = s[:-3]
+        s = s.strip()
+
+    # 2. Easy win
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Extract the outermost { ... } balanced span
+    def _extract_balanced(text: str) -> Optional[str]:
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        in_str = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return None
+
+    balanced = _extract_balanced(s)
+    if balanced:
+        try:
+            return json.loads(balanced)
+        except json.JSONDecodeError:
+            s = balanced
+
+    # 4. Normalize smart quotes + zero-width junk
+    repairs = (s
+        .replace("\u201c", '"').replace("\u201d", '"')
+        .replace("\u2018", "'").replace("\u2019", "'")
+        .replace("\ufeff", "").replace("\u200b", ""))
+
+    # 5. Drop trailing commas before } or ]
+    repairs = re.sub(r",\s*([}\]])", r"\1", repairs)
+
+    try:
+        return json.loads(repairs)
+    except json.JSONDecodeError:
+        pass
+
+    # 6. Try closing an unterminated structure (truncated response)
+    opens_obj = repairs.count("{") - repairs.count("}")
+    opens_arr = repairs.count("[") - repairs.count("]")
+    if opens_obj > 0 or opens_arr > 0:
+        # If the last character is inside an open string, try to close it.
+        quote_count = 0
+        escape = False
+        for ch in repairs:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                quote_count += 1
+        padded = repairs
+        if quote_count % 2 == 1:
+            padded += '"'
+        padded += "]" * max(0, opens_arr) + "}" * max(0, opens_obj)
+        try:
+            return json.loads(padded)
+        except json.JSONDecodeError:
+            pass
+
+    # 7. Last resort: aggressive fix for the "Expecting ',' delimiter"
+    # case where a string value contains an unescaped quote. Rewrite
+    # naked quotes inside suspected string values by walking the
+    # structure character by character.
+    fixed = _repair_unescaped_quotes(repairs)
+    if fixed is not None:
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _repair_unescaped_quotes(s: str) -> Optional[str]:
+    """Walk the string and escape double quotes that appear inside
+    what looks like a JSON string value. Heuristic: once we're inside
+    a string, a `"` is an end-quote only if the next non-whitespace
+    character is one of , } ] : — otherwise it's an unescaped
+    interior quote and we add a backslash before it."""
+    if not s:
+        return None
+    out: list[str] = []
+    in_str = False
+    escape = False
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if escape:
+            out.append(ch)
+            escape = False
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape = True
+            i += 1
+            continue
+        if ch == '"':
+            if not in_str:
+                in_str = True
+                out.append(ch)
+            else:
+                # Look ahead for the first non-whitespace character.
+                j = i + 1
+                while j < len(s) and s[j] in " \t\n\r":
+                    j += 1
+                terminator = s[j] if j < len(s) else ""
+                if terminator in (",", "}", "]", ":", ""):
+                    in_str = False
+                    out.append(ch)
+                else:
+                    # Interior quote inside a string value — escape it.
+                    out.append("\\")
+                    out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 async def ollama_chat(messages: list[dict], *, temperature: float = 0.7,
                       format_json: bool = False, max_tokens: int = 400,
                       timeout: float = 180,
@@ -3627,17 +3799,32 @@ async def api_carta_quiz(req: QuizReq):
     except Exception as e:
         raise HTTPException(502, f"Ollama unavailable: {e}")
 
-    raw = (raw or "").strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not m:
-            raise HTTPException(502, f"Could not parse quiz: {raw[:200]}")
+    data = _coerce_llm_json(raw)
+    if data is None:
+        # One retry with a tougher prompt — LLMs sometimes recover when
+        # told their previous output was malformed and to emit only the
+        # JSON with no prose or markdown fences.
+        log.info("quiz: first pass unparseable (len=%d), retrying", len(raw or ""))
         try:
-            data = json.loads(m.group(0))
-        except json.JSONDecodeError as e:
-            raise HTTPException(502, f"Invalid JSON from quiz: {e}")
+            raw2 = await ollama_chat(
+                [
+                    {"role": "system", "content": system
+                        + "\n\nCRITICAL: respond with ONLY the JSON object. "
+                        + "No prose, no markdown code fences, no trailing comma. "
+                        + "Escape every double quote inside a string value with a backslash."},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.2, format_json=True,
+                max_tokens=min(1800, 200 + 280 * count),
+                timeout=600,
+                provider=req.provider, model=req.model,
+            )
+        except Exception as e:
+            raise HTTPException(502, f"Ollama unavailable: {e}")
+        data = _coerce_llm_json(raw2)
+        if data is None:
+            log.warning("quiz: second pass still unparseable. raw first 400 of pass 1: %s", (raw or "")[:400])
+            raise HTTPException(502, "Model returned malformed JSON twice; try another article.")
 
     questions: list[dict] = []
     for q in (data.get("questions") or [])[:count]:
