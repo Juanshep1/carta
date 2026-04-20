@@ -782,6 +782,108 @@ import zipfile as _zipfile
 from xml.sax.saxutils import escape as _xml_escape
 
 
+# Map of file extension to EPUB manifest media-type. EPUB 3 readers are
+# strict about this — a wrong media-type on a JPEG and the reader shows
+# the broken-image glyph even though the bytes are there.
+_EXT_MEDIA_TYPE = {
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".gif":  "image/gif",
+    ".webp": "image/webp",
+    ".svg":  "image/svg+xml",
+}
+
+# Matches the src paths produced by process_article_html when captured
+# content was baked into the DB. Examples:
+#   <img src="/static/images/abc123.jpg" ...>
+#   src="/static/images/ab.png"
+_IMG_SRC_RE = re.compile(
+    r'''(<img[^>]*\s)(src|data-src)\s*=\s*(['"])(/static/images/([^'"]+))\3''',
+    flags=re.IGNORECASE,
+)
+
+
+def _rewrite_and_collect_images(html: str,
+                                collected: dict[str, bytes]) -> str:
+    """Rewrite every /static/images/<file> src in `html` to `images/<file>`
+    and load each referenced file's bytes into `collected` (keyed by the
+    bare filename). Missing files are left untouched — the reader will
+    show the broken-image glyph for those, same as before, but every
+    file that *does* exist on disk is now guaranteed to embed.
+
+    We operate on the serialized HTML (not BeautifulSoup) because the
+    chapter body is already finalized XHTML — reparsing would risk
+    trimming whitespace or attribute quoting EPUB readers are picky
+    about."""
+    if not html:
+        return html
+
+    def _sub(m: re.Match) -> str:
+        prefix = m.group(1)  # `<img ... ` up through the attribute name
+        attr_name = m.group(2)
+        quote = m.group(3)
+        full_path = m.group(4)  # /static/images/<filename>
+        filename = m.group(5)
+        disk_path = IMG_DIR / filename
+        if filename not in collected:
+            try:
+                collected[filename] = disk_path.read_bytes()
+            except (FileNotFoundError, OSError):
+                # Leave the original src so we fail visibly rather than
+                # silently pointing at a file that isn't in the zip.
+                return m.group(0)
+        # Always normalize to src (drop data-src) since the HTML is being
+        # read offline by an EPUB reader that doesn't know about lazy loading.
+        return f'{prefix}src={quote}images/{filename}{quote}'
+
+    return _IMG_SRC_RE.sub(_sub, html)
+
+
+def _build_image_manifest_entries(image_files: dict[str, bytes],
+                                  start_id: int = 1) -> list[str]:
+    """Turn a {filename: bytes} map into EPUB manifest <item> lines.
+    Skips files with unknown extensions (EPUB readers reject those)."""
+    items: list[str] = []
+    for idx, filename in enumerate(sorted(image_files.keys()), start=start_id):
+        ext = Path(filename).suffix.lower()
+        media = _EXT_MEDIA_TYPE.get(ext)
+        if not media:
+            continue
+        # Manifest ids must be XML NCNames — safe subset here is a letter prefix + idx.
+        items.append(
+            f'<item id="img{idx:04d}" href="images/{filename}" media-type="{media}"/>'
+        )
+    return items
+
+
+def _inline_images_as_data_uris(html: str) -> str:
+    """For the print-ready HTML (which the user saves as PDF from the
+    browser), replace every /static/images/<file> src with a base64
+    data URI. This makes the page self-contained: images survive
+    download-to-disk and offline printing without a running server."""
+    if not html:
+        return html
+    import base64 as _b64
+
+    def _sub(m: re.Match) -> str:
+        prefix = m.group(1)
+        quote = m.group(3)
+        filename = m.group(5)
+        ext = Path(filename).suffix.lower()
+        media = _EXT_MEDIA_TYPE.get(ext)
+        if not media:
+            return m.group(0)
+        try:
+            data = (IMG_DIR / filename).read_bytes()
+        except (FileNotFoundError, OSError):
+            return m.group(0)
+        b64 = _b64.b64encode(data).decode("ascii")
+        return f'{prefix}src={quote}data:{media};base64,{b64}{quote}'
+
+    return _IMG_SRC_RE.sub(_sub, html)
+
+
 def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
     prov_title = _xml_escape(province["name"])
     book_id = f"urn:uuid:{_uuid.uuid4()}"
@@ -819,6 +921,7 @@ def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
     spine_items = ['<itemref idref="titlepage"/>']
     nav_items = []
     chapter_files: list[tuple[str, str]] = []
+    image_files: dict[str, bytes] = {}   # filename -> bytes, deduped across chapters
 
     for i, a in enumerate(articles, start=1):
         cid = f"ch{i:03d}"
@@ -831,6 +934,10 @@ def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
         # <script> and inline event handlers defensively.
         body_html = re.sub(r"<script[\s\S]*?</script>", "", body_html, flags=re.I)
         body_html = re.sub(r"\son[a-z]+=\"[^\"]*\"", "", body_html, flags=re.I)
+        # Pull /static/images/<file> paths in-line. Each unique file is
+        # added to `image_files` once; the chapter HTML's src gets
+        # rewritten to the packaged path.
+        body_html = _rewrite_and_collect_images(body_html, image_files)
         chapter_xhtml = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<!DOCTYPE html>\n'
@@ -874,6 +981,8 @@ def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
         + "".join(nav_items)
         + '</ol></nav></body></html>\n'
     )
+    manifest_items.extend(_build_image_manifest_entries(image_files))
+
     content_opf = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
@@ -906,6 +1015,9 @@ def _epub_from_articles(province: dict, articles: list[dict]) -> bytes:
         zf.writestr("OEBPS/style.css", stylesheet)
         for fname, content in chapter_files:
             zf.writestr(f"OEBPS/{fname}", content)
+        for filename, data in image_files.items():
+            if Path(filename).suffix.lower() in _EXT_MEDIA_TYPE:
+                zf.writestr(f"OEBPS/images/{filename}", data)
     return buf.getvalue()
 
 
@@ -1502,6 +1614,7 @@ def _epub_from_curriculum(topic: str, course: dict) -> bytes:
         '<li><a href="intro.xhtml">Introduction</a></li>',
     ]
     files: list[tuple[str, str]] = []
+    image_files: dict[str, bytes] = {}
 
     titlepage_xhtml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
@@ -1553,6 +1666,7 @@ def _epub_from_curriculum(topic: str, course: dict) -> bytes:
                                  ch.get("discussion_questions") or [])
             + '</section></body></html>\n'
         )
+        chapter_xhtml = _rewrite_and_collect_images(chapter_xhtml, image_files)
         files.append((fname, chapter_xhtml))
         manifest_items.append(
             f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>'
@@ -1585,6 +1699,7 @@ def _epub_from_curriculum(topic: str, course: dict) -> bytes:
         + "".join(nav_items)
         + '</ol></nav></body></html>\n'
     )
+    manifest_items.extend(_build_image_manifest_entries(image_files))
     content_opf = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
@@ -1615,6 +1730,9 @@ def _epub_from_curriculum(topic: str, course: dict) -> bytes:
         zf.writestr("OEBPS/style.css", stylesheet)
         for fname, content in files:
             zf.writestr(f"OEBPS/{fname}", content)
+        for filename, data in image_files.items():
+            if Path(filename).suffix.lower() in _EXT_MEDIA_TYPE:
+                zf.writestr(f"OEBPS/images/{filename}", data)
     return buf.getvalue()
 
 
@@ -1703,6 +1821,10 @@ def _html_from_curriculum(topic: str, course: dict) -> str:
                                   ch.get("learning_objectives") or [],
                                   ch.get("key_takeaways") or [],
                                   ch.get("discussion_questions") or [])
+        # Inline /static/images/<file> src as base64 data URIs so the
+        # printed PDF (or saved-then-opened HTML) keeps its figures
+        # instead of showing broken-image glyphs.
+        body = _inline_images_as_data_uris(body)
         chap_html += f"""
         <section class="chapter">
           <div class="kicker">Chapter {_to_roman(i)}</div>
