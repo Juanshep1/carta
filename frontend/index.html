@@ -5939,6 +5939,10 @@ const Reader = {
   idx: 0,
   state: "idle",              // idle | playing | paused
   articleTitle: "",
+  // Slug of the article whose audio is playing. Used so that navigating
+  // to another article + tapping Listen reads the new article instead
+  // of pausing the old one, and so navigating away stops the audio.
+  articleSlug: "",
   voicesLoaded: false,
   // When a premium (backend) voice is selected we hand playback to an
   // <audio> element instead of speechSynthesis. This field is populated
@@ -6071,9 +6075,10 @@ function speakChunk(i) {
   window.speechSynthesis.speak(utt);
 }
 
-function startReading(text, title) {
+function startReading(text, title, slug) {
   stopReader();
   Reader.articleTitle = title || "";
+  Reader.articleSlug = slug || currentArticleSlug() || "";
   const saved = localStorage.getItem("carta.voice.uri") || "";
   if (saved.startsWith("premium:")) {
     startReadingPremium(text, saved.slice("premium:".length), title);
@@ -6244,7 +6249,16 @@ function stopReader() {
   Reader.premiumQueue = [];
   Reader.premiumIdx = 0;
   Reader.premiumVoiceID = "";
+  Reader.articleSlug = "";
   updateListenBtn();
+}
+
+// Extract the article slug from the current URL hash, e.g.
+// "#article/parapsychology" -> "parapsychology". Returns "" if we
+// aren't on an article view.
+function currentArticleSlug() {
+  const h = location.hash || "";
+  return h.startsWith("#article/") ? h.slice("#article/".length) : "";
 }
 
 function toggleReader() {
@@ -6252,16 +6266,23 @@ function toggleReader() {
     toast("Your browser doesn't support speech synthesis.", "err");
     return;
   }
-  if (Reader.state === "playing") { pauseReader(); return; }
-  if (Reader.state === "paused")  { resumeReader(); return; }
-  // Idle — read the current article.
+  // Pause/resume ONLY if the audio is for the article the user is
+  // actually looking at. If they navigated here from a different
+  // article that's still playing in the background, tapping Listen
+  // should read *this* article, not pause the other one.
+  const here = currentArticleSlug();
+  if (Reader.state !== "idle" && Reader.articleSlug === here) {
+    if (Reader.state === "playing") { pauseReader(); return; }
+    if (Reader.state === "paused")  { resumeReader(); return; }
+  }
+  // Start reading this article (implicitly stops any other).
   const title = $("artTitle") ? $("artTitle").textContent : "";
   const deck = $("artDeck") ? $("artDeck").textContent : "";
   const proseEl = $("artProse");
   if (!proseEl) return;
   const prose = stripHtmlForTTS(proseEl.innerHTML);
   const full = [title, deck, prose].filter(Boolean).join(". ");
-  startReading(full, title);
+  startReading(full, title, here);
 }
 
 function updateListenBtn() {
@@ -6338,11 +6359,14 @@ async function previewVoice() {
   window.speechSynthesis.speak(utt);
 }
 
-// Stop reading when navigating away from an article view.
+// Stop reading when navigating away from an article view, OR when
+// navigating from one article to a different one. Audio follows the
+// currently-viewed article — no background reading across navigations.
 window.addEventListener("hashchange", () => {
-  if (Reader.state !== "idle" && !location.hash.startsWith("#article/")) {
-    stopReader();
-  }
+  if (Reader.state === "idle") return;
+  const here = currentArticleSlug();
+  if (!here) { stopReader(); return; }
+  if (Reader.articleSlug && Reader.articleSlug !== here) { stopReader(); }
 });
 
 // Voice list often loads asynchronously on Chrome — re-populate when it fires.
