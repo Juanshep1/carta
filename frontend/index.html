@@ -2829,6 +2829,41 @@
     text-transform: uppercase;
     color: var(--faded);
   }
+  .compile-body label .hint {
+    color: var(--faded);
+    margin-left: 4px;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    text-transform: none;
+    font-style: italic;
+    font-family: var(--f-body);
+  }
+  .compile-body .exclude-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .compile-body .exclude-chips .chip {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    background: transparent;
+    border: 1px solid var(--rule);
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .compile-body .exclude-chips .chip:hover {
+    border-color: var(--oxblood);
+    color: var(--oxblood);
+  }
+  .compile-body .exclude-chips .chip.active {
+    background: var(--oxblood);
+    color: var(--parchment);
+    border-color: var(--oxblood);
+  }
   .compile-body label .chaps {
     color: var(--oxblood);
     margin-left: 6px;
@@ -4572,7 +4607,27 @@
     <div class="compile-body" id="compileBody">
       <label>Topic</label>
       <input id="compileTopic" type="text"
-             placeholder="the French Revolution, cephalopod cognition…"
+             placeholder="the Illuminati, the French Revolution, cephalopod cognition…"
+             autocomplete="off" spellcheck="false">
+
+      <label>Angle <span class="hint">— the specific lens you want</span></label>
+      <input id="compileAngle" type="text"
+             placeholder="historical origins, pharmacology, cultural impact…"
+             autocomplete="off" spellcheck="false">
+
+      <label>Exclude <span class="hint">— skip anything that's really a…</span></label>
+      <div class="exclude-chips" id="compileExcludeChips">
+        <button type="button" class="chip" data-kw="song">songs</button>
+        <button type="button" class="chip" data-kw="film">films</button>
+        <button type="button" class="chip" data-kw="tv series">TV shows</button>
+        <button type="button" class="chip" data-kw="episode">episodes</button>
+        <button type="button" class="chip" data-kw="album">albums</button>
+        <button type="button" class="chip" data-kw="video game">video games</button>
+        <button type="button" class="chip" data-kw="novel">novels</button>
+        <button type="button" class="chip" data-kw="character">characters</button>
+      </div>
+      <input id="compileExcludeCustom" type="text"
+             placeholder="other words, comma-separated"
              autocomplete="off" spellcheck="false">
 
       <label>Format</label>
@@ -6723,6 +6778,7 @@ function openCompile() {
   document.body.style.overflow = "hidden";
   $("compileTopic").focus();
   resetCompileResult();
+  wireCompileChips();
 }
 function closeCompile() {
   $("compileModal").classList.remove("open");
@@ -6783,6 +6839,28 @@ function stopCompileTimer() {
   if (_compileTimer) { clearInterval(_compileTimer); _compileTimer = null; }
 }
 
+function collectCompileExcludes() {
+  const set = new Set();
+  document.querySelectorAll("#compileExcludeChips .chip.active").forEach(el => {
+    const kw = el.getAttribute("data-kw");
+    if (kw) set.add(kw);
+  });
+  const custom = ($("compileExcludeCustom")?.value || "")
+    .split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+  custom.forEach(k => set.add(k));
+  return [...set];
+}
+
+// Wire up the exclude chips on first interaction (and re-wire on each
+// modal open). Safe to call repeatedly — toggles `.active` class.
+function wireCompileChips() {
+  document.querySelectorAll("#compileExcludeChips .chip").forEach(el => {
+    if (el.dataset.wired) return;
+    el.dataset.wired = "1";
+    el.addEventListener("click", () => el.classList.toggle("active"));
+  });
+}
+
 async function runCompile() {
   const topic = $("compileTopic").value.trim();
   if (!topic) return;
@@ -6794,11 +6872,15 @@ async function runCompile() {
   statusEl.style.display = "flex";
   startCompileTimer();
   try {
+    const angle = ($("compileAngle")?.value || "").trim();
+    const excludes = collectCompileExcludes();
     const body = {
       topic,
       format: _compileFmt,
       target_articles: Number($("compileCount").value),
       auto_expand: $("compileAuto").checked,
+      ...(angle ? { angle } : {}),
+      ...(excludes.length ? { excludes } : {}),
     };
     // api() uses JSON fetch; compile returns a binary/HTML body so we bypass
     // it and go to fetch directly. Reuses CARTA.base + the same key name
