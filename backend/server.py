@@ -3733,59 +3733,81 @@ async def _archive_fetch(source: str, query: str, fetcher) -> list[dict]:
 
 
 async def _fetch_perseus(query: str) -> list[dict]:
-    """Perseus Digital Library. Exposes Greek/Latin texts via a
-    JSON-LD endpoint. We search the catalogue and return a handful of
-    matching works with a canonical URL the client can open."""
-    url = "https://scaife.perseus.org/library/search"
+    """Gutendex — Project Gutenberg's free JSON catalog API. Used
+    here as the "classic texts" source because Perseus has no stable
+    public JSON search endpoint (Scaife returns 404 at any URL
+    advertised in its docs). Gutendex exposes every Gutenberg book
+    with author, language, subject categories, and download URLs in
+    pure JSON, no key required."""
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15, connect=5),
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         follow_redirects=True,
     ) as client:
-        r = await client.get(url, params={"q": query, "limit": 6})
+        r = await client.get(
+            "https://gutendex.com/books/",
+            params={"search": query, "page_size": 6},
+        )
         r.raise_for_status()
-        data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        data = r.json()
     results: list[dict] = []
-    for hit in (data.get("results") or [])[:6]:
-        title = hit.get("label") or hit.get("title") or "Untitled"
-        urn = hit.get("urn") or hit.get("id") or ""
-        reader_url = f"https://scaife.perseus.org/reader/{urn}" if urn else ""
+    for book in (data.get("results") or [])[:6]:
+        authors = ", ".join(a.get("name", "") for a in (book.get("authors") or []))[:160]
+        languages = ", ".join(book.get("languages") or [])[:40]
+        # Prefer the plaintext UTF-8 formats link; fall back to HTML
+        # or generic text if unavailable.
+        fmts = book.get("formats") or {}
+        reader = (
+            fmts.get("text/html") or
+            fmts.get("text/plain; charset=utf-8") or
+            fmts.get("text/plain") or
+            f"https://www.gutenberg.org/ebooks/{book.get('id','')}"
+        )
+        subjects = ", ".join((book.get("subjects") or [])[:3])[:240]
         results.append({
-            "title": str(title)[:200],
-            "author": str(hit.get("creator") or hit.get("author") or "")[:120],
-            "language": str(hit.get("lang") or "")[:12],
-            "url": reader_url,
-            "snippet": str(hit.get("description") or "")[:240],
+            "title": str(book.get("title") or "")[:200],
+            "author": authors,
+            "language": languages,
+            "url": str(reader),
+            "snippet": subjects,
         })
     return results
 
 
 async def _fetch_chronam(query: str) -> list[dict]:
-    """Library of Congress Chronicling America. Free, no API key.
-    Returns scanned newspaper pages with a thumbnail and a deep link
-    to the high-resolution image viewer."""
-    url = "https://chroniclingamerica.loc.gov/search/pages/results/"
+    """Library of Congress historical newspapers. The old
+    chroniclingamerica.loc.gov endpoint now redirects to
+    www.loc.gov/newspapers/ — LoC consolidated URLs in 2024. Newer
+    endpoint returns a cleaner schema too."""
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(15, connect=5),
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
         follow_redirects=True,
     ) as client:
-        r = await client.get(url, params={
-            "andtext": query, "format": "json", "rows": 6,
-        })
+        r = await client.get(
+            "https://www.loc.gov/newspapers/",
+            params={"q": query, "fo": "json", "c": 6},
+        )
         r.raise_for_status()
         data = r.json()
     results: list[dict] = []
-    for item in (data.get("items") or [])[:6]:
-        date = str(item.get("date") or "")
-        iso_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if len(date) == 8 else date
+    for item in (data.get("results") or [])[:6]:
+        date = item.get("date") or ""
+        # LoC returns dates like "1922-08-17"; accept as-is.
+        place = ", ".join(item.get("location_state") or item.get("location") or [])[:160]
+        thumb = ""
+        imgs = item.get("image_url") or []
+        if isinstance(imgs, list) and imgs:
+            thumb = str(imgs[0])
+        elif isinstance(imgs, str):
+            thumb = imgs
         results.append({
-            "title": str(item.get("title") or item.get("title_normal") or "")[:200],
-            "date": iso_date,
-            "place": str(item.get("place_of_publication") or "")[:160],
-            "snippet": str((item.get("ocr_eng") or ""))[:320],
-            "url": item.get("url", "").replace(".json", ""),
-            "thumbnail": item.get("thumbnail_url", ""),
+            "title": str(item.get("title") or "")[:200],
+            "date": str(date)[:10],
+            "place": place,
+            "snippet": str((item.get("description") or [""])[0] if isinstance(item.get("description"), list) else (item.get("description") or ""))[:320],
+            "url": str(item.get("id") or item.get("url") or ""),
+            "thumbnail": thumb,
         })
     return results
 
@@ -3860,24 +3882,47 @@ async def _fetch_museums(query: str) -> list[dict]:
 
 
 async def _fetch_librivox(query: str) -> list[dict]:
-    """LibriVox public-domain audiobooks. Free JSON API, no key."""
-    url = "https://librivox.org/api/feed/audiobooks"
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(15, connect=5),
-        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-        follow_redirects=True,
-    ) as client:
-        r = await client.get(url, params={
-            "title": query, "limit": 6, "format": "json",
-        })
+    """LibriVox public-domain audiobooks. Free JSON API, no key.
+
+    LibriVox's search is substring-match per field with no OR, so we
+    query both `title` and `author` in parallel and merge by URL —
+    catches "Plato" (which only matches author records) AND "Hamlet"
+    (which only matches title records)."""
+    url = "https://librivox.org/api/feed/audiobooks/"
+    async def _one(field: str) -> list[dict]:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12, connect=5),
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            follow_redirects=True,
+        ) as client:
+            try:
+                r = await client.get(url, params={
+                    field: query, "limit": 6, "format": "json",
+                })
+            except Exception:
+                return []
         if r.status_code != 200:
             return []
         try:
             data = r.json()
         except Exception:
             return []
+        return data.get("books") or []
+
+    by_title, by_author = await asyncio.gather(_one("title"), _one("author"))
+
+    # Dedupe by url_librivox; title match wins the ordering.
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for book in [*by_title, *by_author]:
+        key = str(book.get("url_librivox") or book.get("id") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(book)
+
     results: list[dict] = []
-    for book in (data.get("books") or [])[:6]:
+    for book in merged[:6]:
         authors = ", ".join(
             f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
             for a in (book.get("authors") or [])

@@ -7221,10 +7221,10 @@ function archivesSkeleton() {
 
 function renderArchives(data, grid) {
   const cols = [
-    { key: "perseus",  title: "Perseus — Greek &amp; Latin", render: renderPerseusItem },
-    { key: "chronam",  title: "Chronicling America",          render: renderChronamItem },
-    { key: "museums",  title: "Museums",                      render: renderMuseumItem },
-    { key: "librivox", title: "LibriVox",                     render: renderLibrivoxItem },
+    { key: "perseus",  title: "Gutenberg — Classics",       render: renderPerseusItem },
+    { key: "chronam",  title: "Historical Newspapers",       render: renderChronamItem },
+    { key: "museums",  title: "Museums",                     render: renderMuseumItem },
+    { key: "librivox", title: "LibriVox",                    render: renderLibrivoxItem },
   ];
   const anyResults = cols.some(c => (data[c.key] || []).length > 0);
   if (!anyResults) {
