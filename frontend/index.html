@@ -1209,6 +1209,38 @@
     counter-reset: section;
   }
   .prose p { margin-bottom: 1.2em; }
+
+  /* Tap-to-read affordance — hover any stamped paragraph/heading and
+     get a subtle gilt left-edge pulse indicating "click to start
+     reading from here". The currently-reading chunk gets a stronger
+     oxblood bar. */
+  .prose .tap-to-read {
+    cursor: pointer;
+    position: relative;
+    padding-left: 8px;
+    margin-left: -8px;
+    border-left: 2px solid transparent;
+    transition: border-color .2s, background-color .2s;
+  }
+  .prose .tap-to-read:hover {
+    border-left-color: color-mix(in srgb, var(--gilt) 55%, transparent);
+    background-color: color-mix(in srgb, var(--gilt) 5%, transparent);
+  }
+  .prose .tap-to-read.reading-now {
+    border-left-color: var(--oxblood);
+    background-color: color-mix(in srgb, var(--oxblood) 6%, transparent);
+  }
+  .prose .tap-to-read.reading-now::before {
+    content: "\266A";
+    position: absolute;
+    left: -18px; top: 0.2em;
+    color: var(--oxblood);
+    font-family: var(--f-display);
+    font-size: 12px;
+  }
+  @media (max-width: 900px) {
+    .prose .tap-to-read.reading-now::before { display: none; }
+  }
   .prose > p:first-of-type::first-letter,
   .prose > section:first-of-type > p:first-of-type::first-letter {
     font-family: var(--f-display);
@@ -5703,6 +5735,10 @@ async function openArticleView(slug) {
     // is effectively instant on repeat article opens, and we render
     // from localStorage first so offline loads aren't blank.
     loadArchives(a.title);
+    // Tap-to-read: stamp each paragraph/heading with the chunk index
+    // that contains it, so clicking anywhere in the body starts the
+    // voice reader from that paragraph.
+    prepareArticleJumpMap();
   } catch (e) {
     // On a genuine 404 we offer to capture — the slug often came from a
     // Wikipedia link the user clicked before that article was added. The
@@ -6539,6 +6575,7 @@ function chunkText(text, max = 900) {
 
 function speakChunk(i) {
   if (i >= Reader.queue.length) { stopReader(); return; }
+  highlightChunk(i);
   const utt = new SpeechSynthesisUtterance(Reader.queue[i]);
   const v = pickVoice();
   if (v) utt.voice = v;
@@ -6549,6 +6586,125 @@ function speakChunk(i) {
   utt.onerror = () => { if (Reader.state === "playing") speakChunk(i + 1); };
   Reader.idx = i;
   window.speechSynthesis.speak(utt);
+}
+
+// ---------- TAP-TO-READ ----------
+// On article open, walk every paragraph/heading in the prose body,
+// find which chunk in the Reader queue contains its text, and stamp
+// that chunk index on the element. Clicking any tagged element then
+// makes the reader start speaking from that chunk — no need to wait
+// for it to read through the preamble every time.
+function prepareArticleJumpMap() {
+  const proseEl = $("artProse");
+  if (!proseEl) return;
+  const fullText = (proseEl.textContent || "").replace(/\s+/g, " ").trim();
+  const chunks = chunkText(fullText, 900);
+  // Pre-populate the Reader queue even before Listen is tapped — the
+  // jump handler uses this as the source of truth for indices.
+  Reader.queue = chunks;
+  Reader.idx = 0;
+
+  // Running cursor over fullText. For each paragraph/heading, advance
+  // the cursor past its text and resolve to a chunk via cumulative
+  // offsets.
+  const chunkStart = [];
+  let off = 0;
+  for (const c of chunks) {
+    chunkStart.push(off);
+    off += c.length + 1;
+  }
+  function chunkForOffset(pos) {
+    let idx = 0;
+    for (let i = 0; i < chunkStart.length; i++) {
+      if (chunkStart[i] <= pos) idx = i; else break;
+    }
+    return idx;
+  }
+
+  let cursor = 0;
+  const selector = "p, h1, h2, h3, h4, h5, h6, li, blockquote, figcaption";
+  proseEl.querySelectorAll(selector).forEach((el) => {
+    const tx = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (!tx) return;
+    // Probe with the first 40 characters — cheaper than a full match.
+    const probe = tx.slice(0, Math.min(40, tx.length));
+    const pos = fullText.indexOf(probe, cursor);
+    if (pos < 0) return;
+    el.dataset.chunkIdx = String(chunkForOffset(pos));
+    el.classList.add("tap-to-read");
+    cursor = pos + tx.length;
+  });
+
+  // Wire a single delegated click — don't steal clicks destined for
+  // internal wiki-links or external anchors.
+  proseEl.addEventListener("click", handleProseTap, { capture: false });
+}
+
+function handleProseTap(e) {
+  // Links already have their own handler (navigate to article / offer
+  // capture). Let those fire and keep our handler out of the way.
+  if (e.target.closest("a")) return;
+  const el = e.target.closest("[data-chunk-idx]");
+  if (!el) return;
+  const idx = parseInt(el.dataset.chunkIdx || "0", 10);
+  if (isNaN(idx)) return;
+  e.preventDefault();
+  jumpReaderToChunk(idx);
+}
+
+function jumpReaderToChunk(idx) {
+  // Cancel the current utterance / premium audio so the jump is
+  // instant rather than queued behind the remainder of the chunk.
+  if (Reader.abort) { try { Reader.abort.abort(); } catch {} Reader.abort = null; }
+  if (Reader.audioEl) {
+    try { Reader.audioEl.pause(); } catch {}
+    Reader.audioEl.src = "";
+    Reader.audioEl = null;
+  }
+  if (Reader.audioBlobURL) {
+    URL.revokeObjectURL(Reader.audioBlobURL);
+    Reader.audioBlobURL = null;
+  }
+  if (readerAvailable()) window.speechSynthesis.cancel();
+  Reader.session += 1;
+
+  // Rebuild queue if the user clicked before tapping Listen at all.
+  if (!Reader.queue.length) {
+    const fullText = ($("artProse")?.textContent || "").replace(/\s+/g, " ").trim();
+    Reader.queue = chunkText(fullText, 900);
+    if (!Reader.queue.length) return;
+  }
+  Reader.articleTitle = $("artTitle")?.textContent || Reader.articleTitle;
+  Reader.articleSlug = currentArticleSlug() || Reader.articleSlug;
+  Reader.state = "playing";
+  Reader.idx = idx;
+
+  const saved = localStorage.getItem("carta.voice.uri") || "";
+  if (saved.startsWith("premium:")) {
+    // Premium path: reslice the premium queue so we only synth from
+    // the tapped paragraph forward, not the whole remainder.
+    Reader.mode = "premium";
+    Reader.premiumQueue = Reader.queue.slice(idx);
+    Reader.premiumIdx = 0;
+    Reader.premiumVoiceID = saved.slice("premium:".length);
+    updateListenBtn();
+    playPremiumChunk(Reader.session, Reader.queue.join(" "))
+      .catch(() => {
+        stopReader();
+        startReadingLocal(Reader.queue.slice(idx).join(" "));
+      });
+  } else {
+    Reader.mode = "local";
+    updateListenBtn();
+    speakChunk(idx);
+  }
+}
+
+function highlightChunk(i) {
+  const all = document.querySelectorAll("#artProse .reading-now");
+  all.forEach((el) => el.classList.remove("reading-now"));
+  const target = document.querySelector(`#artProse [data-chunk-idx="${i}"]`);
+  if (target) target.classList.add("reading-now");
 }
 
 function startReading(text, title, slug) {
@@ -6639,6 +6795,10 @@ async function playPremiumChunk(session, fullText) {
   const audio = new Audio(blobURL);
   Reader.audioEl = audio;
   Reader.audioBlobURL = blobURL;
+
+  // Keep the article body's "reading now" highlight in sync with
+  // the premium queue position — Reader.idx was set at jump time.
+  highlightChunk(Reader.idx + Reader.premiumIdx);
 
   audio.addEventListener("ended", () => {
     // Guard: ignore stale events from an audio element that's no longer
