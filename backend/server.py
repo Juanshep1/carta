@@ -1319,6 +1319,17 @@ class CompileReq(BaseModel):
     auto_expand: bool = True
     provider: Optional[str] = None
     model: Optional[str] = None
+    # Free-text angle — "historical origins", "modern conspiracy culture",
+    # "pharmacology only", etc. When given, the LLM curriculum prompt
+    # weaves it in and the ranker treats its words as secondary needles.
+    angle: Optional[str] = None
+    # Kinds of Wikipedia entries to reject out of hand. Free-text words;
+    # matched against the article's Wikipedia `description` field and
+    # title parenthetical. Typical values: "song, film, tv, video game,
+    # episode, album, band". When the user types "Illuminati" and the
+    # corpus drifts into "Illuminati (song by Madonna)", this is what
+    # drops it — the short description reads "song by..." which matches.
+    excludes: Optional[list[str]] = None
 
 
 # English stopwords we strip from topic needles so "the french revolution"
@@ -1376,33 +1387,105 @@ def _compile_rank(topic: str, corpus: list[dict]) -> list[tuple[float, dict]]:
     return scored
 
 
+# Pop-culture / media disambiguation markers. Anything the user's topic
+# is obviously NOT (e.g. a song / film / episode) belongs here. Extended
+# vocabulary so "Illuminati (song by Madonna)" ranks far below the
+# actual Illuminati article.
+_DRIFT_MEDIA_KINDS: tuple[str, ...] = (
+    # Music
+    "band", "song", "album", "ep", "single", "mixtape", "soundtrack",
+    "rapper", "musician", "singer", "producer", "dj", "record label",
+    "discography",
+    # Film / TV
+    "film", "movie", "documentary", "short film", "tv series", "tv show",
+    "tv episode", "episode", "season", "miniseries", "web series",
+    "anime", "cartoon", "franchise",
+    # Print / interactive
+    "novel", "book", "comic", "manga", "graphic novel",
+    "video game", "mobile game", "board game",
+    "magazine", "newspaper",
+    # Fictional entities
+    "character", "fictional", "superhero", "supervillain",
+    # Events / venues
+    "concert", "festival", "tournament", "convention", "pageant",
+    "wrestler", "athlete", "actress", "actor",
+)
+
+
 def _candidate_drift_score(title: str, topic: str) -> int:
     """Deprioritize Wikipedia titles that clearly mean something other
-    than the topic. `(band)`, `(album)`, `(film)`, `(song)` etc. on top
-    of a topic like "telekinesis" indicate a disambiguation branch, not
-    the primary subject. 0 = probably the primary topic; higher = more
-    likely a detour. Tied 0-scores preserve Wikipedia's own order."""
+    than the topic. Typical case: a user compiles on "Illuminati" and
+    the search pool surfaces "Illuminati (song by Madonna)" or
+    "Illuminati (Rapsody album)". 0 = probably the primary topic;
+    higher = more likely a detour. Tied 0-scores preserve Wikipedia's
+    own relevance order."""
     low = title.lower()
     topic_low = topic.lower()
     drift = 0
     if "(" in low and ")" in low:
         inner = low[low.index("(") + 1 : low.index(")")]
-        # Pop-culture disambiguation suffixes that almost never mean the
-        # same thing as the bare topic word.
-        if any(kw in inner for kw in [
-            "band", "song", "album", "film", "movie", "tv series",
-            "tv show", "video game", "novel", "comic", "manga",
-            "rapper", "musician", "singer", "producer", "dj",
-        ]):
-            drift += 10
-        # "Smith (disambiguation)" style
+        # Any media-kind hit is a strong drop signal.
+        if any(kw in inner for kw in _DRIFT_MEDIA_KINDS):
+            drift += 20
+        # "Smith (disambiguation)" hub page — never the primary topic.
         if "disambiguation" in inner:
-            drift += 5
+            drift += 12
+        # Year-based disambiguation often indicates a specific film /
+        # event rather than the general subject.
+        if re.search(r"\b(19|20)\d{2}\b", inner):
+            drift += 6
     # Exact title match with the topic is a strong primary-topic signal.
     bare = re.sub(r"\s*\([^)]*\)", "", low).strip()
     if bare == topic_low:
-        drift -= 2
+        drift -= 4
     return drift
+
+
+def _description_suggests_media(description: str) -> Optional[str]:
+    """Return the media-kind keyword if the Wikipedia `description` field
+    ("song by Madonna", "2019 American film", "Japanese television
+    drama series") implies the article is a specific media object
+    rather than the general subject. Empty / missing descriptions
+    return None."""
+    if not description:
+        return None
+    d = description.lower()
+    # Sorted longest-first so "tv series" beats "tv".
+    for kw in sorted(_DRIFT_MEDIA_KINDS, key=len, reverse=True):
+        if kw in d:
+            return kw
+    return None
+
+
+def _topic_implies_media(topic: str) -> bool:
+    """When the user's topic itself contains a media keyword
+    ("electric light orchestra song", "breaking bad episode"), the
+    media-description filter above should NOT reject matches — the
+    user wants media-specific results. Cheap word-level check."""
+    if not topic:
+        return False
+    t = topic.lower()
+    return any(kw in t for kw in _DRIFT_MEDIA_KINDS)
+
+
+def _excludes_hit(description: str, title: str, excludes: list[str]) -> Optional[str]:
+    """Return the first exclude keyword that appears in the article's
+    description or parenthetical title. Used to honor the compile form's
+    explicit "exclude" field ("songs, films, tv")."""
+    if not excludes:
+        return None
+    d = (description or "").lower()
+    t = (title or "").lower()
+    inner = ""
+    if "(" in t and ")" in t:
+        inner = t[t.index("(") + 1 : t.index(")")]
+    for raw in excludes:
+        kw = raw.strip().lower()
+        if len(kw) < 2:
+            continue
+        if kw in d or kw in inner:
+            return kw
+    return None
 
 
 _TOPIC_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -1484,7 +1567,8 @@ async def _parallel_auto_expand(topic: str,
                                 existing_slugs: set[str],
                                 existing_titles_lower: set[str],
                                 needed: int,
-                                max_concurrent: int = 10
+                                max_concurrent: int = 10,
+                                excludes: Optional[list[str]] = None
                                 ) -> list[str]:
     """Run Wikipedia captures in parallel batches until we've acquired
     `needed` fresh slugs or exhausted the candidate pool.
@@ -1504,17 +1588,57 @@ async def _parallel_auto_expand(topic: str,
 
     # Pull a generous pool so a second pass has something to try.
     candidates = await _wiki_related_titles(topic, limit=max(needed * 5, 30))
-    # Drop already-captured, then stable-sort by drift score so primary
-    # matches come first without disrupting Wikipedia's relevance order.
-    indexed = [(i, t) for i, t in enumerate(candidates)
-               if t.lower() not in existing_titles_lower]
+    # Drop already-captured, then drop anything whose title parenthetical
+    # matches an excluded media kind up-front — cheapest filter, no
+    # network round-trip per candidate. Then stable-sort by drift score
+    # so primary matches come first.
+    normalized_excludes = [e.strip().lower() for e in (excludes or []) if e.strip()]
+    indexed: list[tuple[int, str]] = []
+    for i, t in enumerate(candidates):
+        if t.lower() in existing_titles_lower:
+            continue
+        if _excludes_hit("", t, normalized_excludes):
+            log.info("compile: pre-filter drop '%s' (excluded keyword in title)", t)
+            continue
+        indexed.append((i, t))
     indexed.sort(key=lambda it: (_candidate_drift_score(it[1], topic), it[0]))
     pool = [t for _i, t in indexed]
 
     acquired: list[str] = []
     attempted_titles: set[str] = set()
+    topic_is_media_spec = _topic_implies_media(topic)
 
     async def _one(title: str) -> Optional[str]:
+        # Peek at the Wikipedia summary's `description` field BEFORE
+        # committing to a full capture. If it says "song by X" / "2019
+        # American film" / "TV episode" and the user's topic isn't
+        # itself a media-specific phrase, skip without pulling the
+        # article body at all. Saves a lot of bandwidth and DB churn
+        # on drift-heavy topics like "Illuminati".
+        try:
+            summary = await fetch_summary(title)
+        except Exception as e:
+            log.info("compile: summary peek failed for '%s': %s", title, e)
+            summary = {}
+        description = (summary.get("description") or "").strip()
+
+        if description and not topic_is_media_spec:
+            kind = _description_suggests_media(description)
+            if kind:
+                log.info(
+                    "compile: pre-capture drop '%s' — description='%s' (kind=%s)",
+                    title, description, kind,
+                )
+                return None
+
+        hit = _excludes_hit(description, title, normalized_excludes)
+        if hit:
+            log.info(
+                "compile: pre-capture drop '%s' — matched exclude '%s' in description='%s'",
+                title, hit, description,
+            )
+            return None
+
         try:
             r = await api_capture(CaptureReq(
                 topic=title,
@@ -1531,9 +1655,8 @@ async def _parallel_auto_expand(topic: str,
         slug = r.get("slug")
         if not slug or slug in existing_slugs or slug in acquired:
             return None
-        # Verify the captured article actually covers the topic — Wikipedia
-        # search will happily return "Telekinesis (band)" for topic
-        # "telekinesis"; the summary is where the drift becomes obvious.
+        # Verify the captured article actually covers the topic — belt-
+        # and-braces after the pre-filter.
         if not await _article_matches_topic(slug, topic):
             log.info("compile: captured '%s' (from '%s') dropped as off-topic for '%s'",
                      slug, title, topic)
@@ -1565,16 +1688,27 @@ async def _parallel_auto_expand(topic: str,
 async def _generate_curriculum(topic: str,
                                articles: list[dict],
                                provider: Optional[str],
-                               model: Optional[str]) -> dict:
+                               model: Optional[str],
+                               angle: Optional[str] = None) -> dict:
     """One LLM call that returns the entire course structure — book title,
     intro, conclusion, and per-chapter metadata. Returning None on failure
-    tells the caller to fall back to plain bookshelf mode."""
+    tells the caller to fall back to plain bookshelf mode. `angle` (if
+    given) biases every section toward the user's specific interest
+    — "historical origins", "pharmacological mechanism", etc."""
     menu = "\n".join(
         f"{i+1}. [{a.get('slug')}] {a.get('title')} — "
         f"{(a.get('deck') or a.get('summary') or '')[:240]}"
         for i, a in enumerate(articles)
     )
     n = len(articles)
+    angle_clause = ""
+    if angle:
+        angle_clause = (
+            f"\n\nThe reader's specific angle on this topic is: \u201C{angle}\u201D. "
+            "Frame the introduction, chapter titles, objectives, and takeaways "
+            "through that lens. If a source article covers material outside the "
+            "angle, note in its chapter that the reader should skim it or skip ahead."
+        )
     system = (
         "You design short, cohesive learning books for a personal wiki. "
         "Given a topic and exactly N source articles, return ONLY JSON — "
@@ -1599,8 +1733,10 @@ async def _generate_curriculum(topic: str,
         "titles should not simply repeat the Wikipedia article title — "
         "reframe them around the concept the reader is learning. Objectives "
         "and takeaways should be concrete and specific to this topic."
+        + angle_clause
     )
-    user = f"Topic: {topic}\n\nSources:\n{menu}"
+    user_angle = f"\n\nAngle: {angle}" if angle else ""
+    user = f"Topic: {topic}{user_angle}\n\nSources:\n{menu}"
 
     try:
         raw = await ollama_chat(
@@ -2051,8 +2187,26 @@ async def api_compile(req: CompileReq):
               FROM articles a LEFT JOIN provinces p ON p.id = a.province_id
         """).fetchall()
     corpus = [dict(r) for r in rows]
-    scored = _compile_rank(topic, corpus)
+    # If the user gave an angle, treat its words as secondary needles —
+    # that way "illuminati historical origins" ranks origin-flavored
+    # captures higher than ones that just mention the secret society.
+    ranking_key = f"{topic} {req.angle}".strip() if req.angle else topic
+    scored = _compile_rank(ranking_key, corpus)
     relevant = [a for _s, a in scored][:target]
+
+    # Drop existing-corpus entries whose title parenthetical matches an
+    # excluded kind. Defensive — mostly catches old captures the user
+    # made before introducing excludes.
+    if req.excludes:
+        normalized_ex = [e.strip().lower() for e in req.excludes if e.strip()]
+        filtered: list[dict] = []
+        for a in relevant:
+            if _excludes_hit((a.get("deck") or a.get("summary") or ""),
+                             (a.get("title") or ""), normalized_ex):
+                log.info("compile: existing '%s' dropped by exclude filter", a.get("title"))
+                continue
+            filtered.append(a)
+        relevant = filtered
 
     # Auto-expand — parallel captures up to `target`-fill. We TRUST the
     # Wikipedia search ranker for newly captured articles: if we re-applied
@@ -2068,6 +2222,7 @@ async def api_compile(req: CompileReq):
         added = await _parallel_auto_expand(
             topic, existing_slugs, existing_titles_lower,
             needed=needed, max_concurrent=10,
+            excludes=req.excludes,
         )
         if added:
             with get_db() as db:
@@ -2102,7 +2257,9 @@ async def api_compile(req: CompileReq):
     # per-chapter objectives/takeaways/questions). Fallback to plain bookshelf
     # mode if the LLM is unavailable or returns unparseable JSON.
     course = await _generate_curriculum(
-        topic, relevant, provider=req.provider, model=req.model
+        topic, relevant,
+        provider=req.provider, model=req.model,
+        angle=req.angle,
     )
     fallback = course is None
     if fallback:
