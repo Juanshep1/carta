@@ -1685,6 +1685,84 @@ async def _parallel_auto_expand(topic: str,
     return acquired[:needed]
 
 
+async def _llm_filter_by_angle(candidates: list[dict],
+                               topic: str,
+                               angle: Optional[str],
+                               provider: Optional[str],
+                               model: Optional[str]) -> list[str]:
+    """Last-resort relevance gate that keyword heuristics can't handle.
+
+    The earlier filters catch obvious drift: (song), (film), media
+    descriptions, excluded kinds. But when the user types an angle
+    like "conspiracy theory", there are borderline articles — say
+    "New World Order" or "Rothschild family" — that technically share
+    vocabulary with the Illuminati topic but aren't what the reader
+    wants. A single batched LLM call returns only the slugs that the
+    model considers genuinely aligned with topic+angle.
+
+    Returns the subset of candidate slugs that pass. On LLM failure
+    we keep everything — the gate is additive, not required."""
+    if not angle or len(candidates) <= 2:
+        return [c.get("slug", "") for c in candidates]
+
+    # Truncate to keep the prompt tight. We only need title + short
+    # description for the model to judge topical fit.
+    menu = "\n".join(
+        f"{i+1}. [{c.get('slug')}] {c.get('title')} — "
+        f"{((c.get('deck') or c.get('summary') or ''))[:160]}"
+        for i, c in enumerate(candidates)
+    )
+    system = (
+        "You are a research assistant curating a focused reading list. "
+        f"The compile topic is \"{topic}\" with a specific angle: "
+        f"\"{angle}\". Review the candidate list and return ONLY the "
+        "slugs of articles that are GENUINELY relevant to both the "
+        "topic and the angle together.\n\n"
+        "REJECT:\n"
+        " - anything that merely shares a word with the topic\n"
+        " - pop-culture entries (songs, films, TV episodes, albums, "
+        "video games, fictional characters) unless the angle is about "
+        "pop culture\n"
+        " - tangential entries that only reference the topic briefly\n"
+        " - biographies of people who are unrelated to the specific angle\n\n"
+        "KEEP only entries that a researcher writing a focused chapter "
+        "on this topic+angle would include.\n\n"
+        "Respond with strict JSON: {\"keep\": [\"slug1\", \"slug2\", ...]}\n"
+        "Include slugs exactly as given. No prose, no markdown."
+    )
+    user = f"Candidates:\n{menu}"
+    try:
+        raw = await ollama_chat(
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            temperature=0.1, format_json=True, max_tokens=600,
+            timeout=90,
+            provider=provider, model=model,
+        )
+    except Exception as e:
+        log.info("compile: angle-gate LLM unavailable — %s (keeping all)", e)
+        return [c.get("slug", "") for c in candidates]
+
+    data = _coerce_llm_json(raw) or {}
+    keep = data.get("keep") if isinstance(data, dict) else None
+    if not isinstance(keep, list):
+        log.info("compile: angle-gate returned non-list (keeping all)")
+        return [c.get("slug", "") for c in candidates]
+
+    # Model sometimes hallucinates slugs — intersect with the real
+    # candidate set rather than trusting it blindly.
+    valid = {c.get("slug") for c in candidates if c.get("slug")}
+    kept = [str(s) for s in keep if str(s) in valid]
+    dropped = [c.get("slug") for c in candidates
+               if c.get("slug") not in set(kept)]
+    if dropped:
+        log.info("compile: angle-gate dropped %d/%d (angle=%r): %s",
+                 len(dropped), len(candidates), angle, dropped)
+    # Safety net: if the gate rejected everything, return the original
+    # set. An empty compile is always worse than a slightly fuzzy one.
+    return kept if kept else [c.get("slug", "") for c in candidates]
+
+
 async def _generate_curriculum(topic: str,
                                articles: list[dict],
                                provider: Optional[str],
@@ -2245,6 +2323,33 @@ async def api_compile(req: CompileReq):
                     relevant.append(na)
                     existing_slug_set.add(na["slug"])
             relevant = relevant[:target]
+
+    # Final relevance gate — only fires when the user gave an angle.
+    # Catches the "New World Order" / "Rothschild family" class of
+    # candidates that share vocabulary with the topic but aren't what
+    # the reader asked for when they typed "Illuminati · conspiracy
+    # theory" into the form.
+    if req.angle and len(relevant) > 2:
+        keep_slugs = await _llm_filter_by_angle(
+            relevant, topic, req.angle,
+            provider=req.provider, model=req.model,
+        )
+        keep_set = set(keep_slugs)
+        pre_len = len(relevant)
+        relevant = [a for a in relevant if a.get("slug") in keep_set]
+        # If the gate thinned us below the minimum useful compile size,
+        # top back up from the original pool rather than returning a
+        # near-empty book.
+        if len(relevant) < min(3, pre_len):
+            relevant_slugs = {a.get("slug") for a in relevant}
+            for a in (scored_originals := [a for _s, a in scored]):
+                if a.get("slug") not in relevant_slugs:
+                    relevant.append(a)
+                    relevant_slugs.add(a.get("slug"))
+                if len(relevant) >= min(target, pre_len):
+                    break
+            _ = scored_originals  # silence linter if empty
+        relevant = relevant[:target]
 
     if not relevant:
         raise HTTPException(
