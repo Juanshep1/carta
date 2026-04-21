@@ -2447,6 +2447,84 @@
     scrollbar-width: thin;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* Sources & Archives strip — same visual language as the Watch
+     strip, but tiled rather than rail-scrolled because the results
+     are short (≤6 per source). Groups into a 2-column grid on
+     desktop so each of the four sources can have its own quiet
+     column. */
+  .archives-strip {
+    margin-top: 60px;
+    padding-top: 28px;
+    border-top: 1px solid var(--rule);
+  }
+  .archives-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 32px 40px;
+    margin-top: 16px;
+  }
+  .archive-col h4 {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--oxblood);
+    margin: 0 0 12px;
+  }
+  .archive-col ul { list-style: none; margin: 0; padding: 0; }
+  .archive-col li {
+    padding: 10px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+  .archive-col li:last-child { border-bottom: 0; }
+  .archive-col a {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    text-decoration: none;
+    color: inherit;
+  }
+  .archive-col a:hover .archive-title { color: var(--oxblood); }
+  .archive-col .archive-thumb {
+    flex: 0 0 60px;
+    width: 60px; height: 60px;
+    object-fit: cover;
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    border: 1px solid var(--rule);
+  }
+  .archive-col .archive-body { flex: 1; min-width: 0; }
+  .archive-col .archive-title {
+    font-family: var(--f-display);
+    font-size: 15px;
+    line-height: 1.3;
+    color: var(--ink);
+    margin: 0 0 2px;
+    display: block;
+  }
+  .archive-col .archive-meta {
+    font-family: var(--f-body);
+    font-size: 12px;
+    font-style: italic;
+    color: var(--faded);
+  }
+  .archive-col .archive-snippet {
+    font-family: var(--f-body);
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 3px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .archive-col .archive-empty {
+    font-family: var(--f-body);
+    font-size: 13px;
+    font-style: italic;
+    color: var(--whisper);
+    padding: 6px 0;
+  }
   .watch-card {
     flex: 0 0 244px;
     display: flex;
@@ -3967,6 +4045,32 @@
   }
   .progress-bar.active { width: 100%; transition: width 25s cubic-bezier(.1,.6,.3,1); }
 
+  /* Offline banner — slides down from the top right when navigator
+     reports offline. Quiet, oxblood, doesn't block anything. Once
+     the service worker has populated its caches on first visit, the
+     app still works offline — this just tells the user so. */
+  .offline-badge {
+    position: fixed;
+    top: 14px; right: 20px;
+    padding: 6px 12px;
+    background: var(--oxblood);
+    color: var(--parchment);
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    border: 1px solid var(--oxblood-deep);
+    opacity: 0;
+    transform: translateY(-12px);
+    transition: opacity .3s, transform .3s;
+    z-index: 130;
+    pointer-events: none;
+  }
+  .offline-badge.on {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
   /* "Adding to wiki" dock — sits at the bottom of the viewport while
      a capture is in flight. Shows the current phase text + a percent
      readout + a filling bar. Styled as a slim editorial footer strip
@@ -4275,6 +4379,7 @@
 <body>
 
 <div class="progress-bar" id="progress"></div>
+<div class="offline-badge" id="offlineBadge" aria-live="polite"></div>
 <!-- Capture progress dock — shown while /api/capture is in flight. -->
 <aside class="capture-dock" id="captureDock" role="status" aria-live="polite">
   <div class="capture-dock-row">
@@ -4494,6 +4599,14 @@
   <section class="watch-strip" id="watchStrip" style="display:none">
     <h3 class="watch-head"><em>Watch</em><span class="watch-sub">free archival footage · CC / public domain</span></h3>
     <div class="watch-rail" id="watchRail"></div>
+  </section>
+
+  <section class="archives-strip" id="archivesStrip" style="display:none">
+    <h3 class="watch-head">
+      <em>Sources &amp; Archives</em>
+      <span class="watch-sub">open-data mirrors · texts, museums, audiobooks, newspapers</span>
+    </h3>
+    <div class="archives-grid" id="archivesGrid"></div>
   </section>
 </div>
 
@@ -5585,6 +5698,11 @@ async function openArticleView(slug) {
     // Companion videos — free sources only, loaded lazily so slow upstream
     // APIs don't block the article from rendering.
     loadWatchStrip(a.slug);
+    // Open-data archives (Perseus, LoC, museums, LibriVox) — loaded
+    // async from /api/archives. The backend caches per-query so this
+    // is effectively instant on repeat article opens, and we render
+    // from localStorage first so offline loads aren't blank.
+    loadArchives(a.title);
   } catch (e) {
     // On a genuine 404 we offer to capture — the slug often came from a
     // Wikipedia link the user clicked before that article was added. The
@@ -7042,6 +7160,135 @@ function watchSkeleton(n = 3) {
   return s;
 }
 
+// ---------- SOURCES & ARCHIVES (open-data mirrors) ----------
+// Pulls Perseus, Library of Congress Chronicling America, Met +
+// Rijksmuseum, and LibriVox results for the article's title. Cached
+// to localStorage keyed by the normalized query so repeat opens and
+// offline loads render instantly.
+const ARCHIVES_CACHE_KEY = "carta.archives.cache.v1";
+function archivesCacheRead(q) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ARCHIVES_CACHE_KEY) || "{}");
+    return all[q] || null;
+  } catch { return null; }
+}
+function archivesCacheWrite(q, data) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ARCHIVES_CACHE_KEY) || "{}");
+    all[q] = { data, at: Date.now() };
+    // Keep cache bounded — 80 queries is plenty.
+    const keys = Object.keys(all);
+    if (keys.length > 80) {
+      keys.sort((a, b) => (all[a].at || 0) - (all[b].at || 0));
+      keys.slice(0, keys.length - 80).forEach((k) => delete all[k]);
+    }
+    localStorage.setItem(ARCHIVES_CACHE_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+async function loadArchives(title) {
+  const strip = $("archivesStrip");
+  const grid = $("archivesGrid");
+  if (!strip || !grid || !title) return;
+  strip.style.display = "block";
+
+  // Render cached first for instant UX + offline support, then refresh.
+  const q = title.trim().toLowerCase();
+  const cached = archivesCacheRead(q);
+  if (cached) renderArchives(cached.data, grid);
+  else        grid.innerHTML = archivesSkeleton();
+
+  try {
+    const r = await api(`/api/archives?q=${encodeURIComponent(title)}`);
+    archivesCacheWrite(q, r);
+    renderArchives(r, grid);
+  } catch {
+    if (!cached) {
+      // Offline and no cache — show a gentle note, keep the strip.
+      grid.innerHTML = `<div class="archive-col"><div class="archive-empty">Archives unreachable. Try again online.</div></div>`;
+    }
+  }
+}
+
+function archivesSkeleton() {
+  return ["Perseus", "Newspapers", "Museums", "Audiobooks"].map(t => `
+    <div class="archive-col">
+      <h4>${t}</h4>
+      <div class="archive-empty">Loading…</div>
+    </div>
+  `).join("");
+}
+
+function renderArchives(data, grid) {
+  const cols = [
+    { key: "perseus",  title: "Perseus — Greek &amp; Latin", render: renderPerseusItem },
+    { key: "chronam",  title: "Chronicling America",          render: renderChronamItem },
+    { key: "museums",  title: "Museums",                      render: renderMuseumItem },
+    { key: "librivox", title: "LibriVox",                     render: renderLibrivoxItem },
+  ];
+  const anyResults = cols.some(c => (data[c.key] || []).length > 0);
+  if (!anyResults) {
+    $("archivesStrip").style.display = "none";
+    return;
+  }
+  grid.innerHTML = cols.map(c => {
+    const items = data[c.key] || [];
+    const body = items.length
+      ? `<ul>${items.map(c.render).join("")}</ul>`
+      : `<div class="archive-empty">No matches.</div>`;
+    return `<div class="archive-col"><h4>${c.title}</h4>${body}</div>`;
+  }).join("");
+}
+
+function renderPerseusItem(it) {
+  const meta = [it.author, it.language].filter(Boolean).join(" · ");
+  return `<li><a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">
+    <div class="archive-body">
+      <span class="archive-title">${escapeHtml(it.title)}</span>
+      ${meta ? `<div class="archive-meta">${escapeHtml(meta)}</div>` : ""}
+      ${it.snippet ? `<div class="archive-snippet">${escapeHtml(it.snippet)}</div>` : ""}
+    </div>
+  </a></li>`;
+}
+
+function renderChronamItem(it) {
+  const meta = [it.date, it.place].filter(Boolean).join(" · ");
+  const thumb = it.thumbnail
+    ? `<img class="archive-thumb" src="${escapeHtml(it.thumbnail)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : "";
+  return `<li><a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">
+    ${thumb}
+    <div class="archive-body">
+      <span class="archive-title">${escapeHtml(it.title)}</span>
+      ${meta ? `<div class="archive-meta">${escapeHtml(meta)}</div>` : ""}
+      ${it.snippet ? `<div class="archive-snippet">${escapeHtml(it.snippet)}</div>` : ""}
+    </div>
+  </a></li>`;
+}
+
+function renderMuseumItem(it) {
+  const meta = [it.source, it.artist, it.date].filter(Boolean).join(" · ");
+  return `<li><a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">
+    ${it.image ? `<img class="archive-thumb" src="${escapeHtml(it.image)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ""}
+    <div class="archive-body">
+      <span class="archive-title">${escapeHtml(it.title)}</span>
+      ${meta ? `<div class="archive-meta">${escapeHtml(meta)}</div>` : ""}
+      ${it.medium ? `<div class="archive-snippet">${escapeHtml(it.medium)}</div>` : ""}
+    </div>
+  </a></li>`;
+}
+
+function renderLibrivoxItem(it) {
+  const meta = [it.author, it.language].filter(Boolean).join(" · ");
+  return `<li><a href="${escapeHtml(it.url)}" target="_blank" rel="noopener">
+    <div class="archive-body">
+      <span class="archive-title">${escapeHtml(it.title)}</span>
+      ${meta ? `<div class="archive-meta">${escapeHtml(meta)}</div>` : ""}
+      ${it.description ? `<div class="archive-snippet">${escapeHtml(it.description)}</div>` : ""}
+    </div>
+  </a></li>`;
+}
+
 async function loadWatchStrip(slug) {
   const strip = $("watchStrip");
   const rail = $("watchRail");
@@ -7373,6 +7620,33 @@ function onSameOriginAsPi() {
 
 // Re-check Ollama every 30s
 setInterval(checkOllama, 30000);
+
+// ---------- OFFLINE / SERVICE WORKER ----------
+// Register sw.js on every boot. Sibling to index.html so it gets
+// origin-scope over everything on the domain. Service workers only
+// activate on the second page load after install — that's fine,
+// once installed the app works fully offline from then on.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch((err) => {
+    // Non-fatal — we just lose offline browsing on this device.
+    console.info("SW register failed (offline mode off)", err);
+  });
+}
+
+function updateOfflineBadge() {
+  const el = $("offlineBadge");
+  if (!el) return;
+  if (navigator.onLine === false) {
+    el.classList.add("on");
+    el.textContent = "OFFLINE · serving cached";
+  } else {
+    el.classList.remove("on");
+    el.textContent = "";
+  }
+}
+window.addEventListener("online",  updateOfflineBadge);
+window.addEventListener("offline", updateOfflineBadge);
+updateOfflineBadge();
 
 // Close confirm dialog on click outside
 $("confirmDialog").addEventListener("click", (e) => {

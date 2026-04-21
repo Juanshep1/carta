@@ -93,3 +93,17 @@ CREATE TABLE IF NOT EXISTS article_videos (
   fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
+
+-- Archives cache: Perseus, Library of Congress Chronicling America,
+-- Rijksmuseum + Met, LibriVox. Keyed by (source, query_slug) so we
+-- only hit each upstream API once per unique query, then serve the
+-- cached payload to every subsequent client — including clients that
+-- go offline mid-session.
+CREATE TABLE IF NOT EXISTS archives_cache (
+  source     TEXT NOT NULL,
+  query_slug TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (source, query_slug)
+);
+CREATE INDEX IF NOT EXISTS idx_archives_fetched ON archives_cache(fetched_at);

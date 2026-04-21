@@ -16,6 +16,7 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Any
 from urllib.parse import unquote, urlparse
@@ -3654,6 +3655,273 @@ def api_search(q: str = ""):
 
 
 # ---------- /api/marginalia ----------
+# ---------- /api/archives — external open-data sources ----------
+# Pluggable "MCP-style" integrations: Perseus (Greek/Latin texts),
+# Library of Congress Chronicling America (US newspapers 1777–1963),
+# Met + Rijksmuseum (open-access artworks), LibriVox (public-domain
+# audiobooks).
+#
+# Every archive call is cached per (source, query_slug) in SQLite so
+# we don't hammer upstream APIs and every result remains available to
+# offline clients once it's been fetched once. Seven-day freshness
+# window — long enough to survive a plane trip, short enough that
+# fresh museum acquisitions eventually surface.
+
+ARCHIVES_CACHE_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _archives_cache_get(source: str, query_slug: str) -> Optional[Any]:
+    with get_db() as db:
+        row = db.execute(
+            "SELECT payload, fetched_at FROM archives_cache "
+            "WHERE source = ? AND query_slug = ?",
+            (source, query_slug),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        fetched = datetime.fromisoformat(str(row["fetched_at"]).replace(" ", "T"))
+    except Exception:
+        fetched = None
+    if fetched and (datetime.utcnow() - fetched).total_seconds() > ARCHIVES_CACHE_TTL_SECONDS:
+        return None
+    try:
+        return json.loads(row["payload"])
+    except Exception:
+        return None
+
+
+def _archives_cache_put(source: str, query_slug: str, payload: Any) -> None:
+    with get_db() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO archives_cache (source, query_slug, payload, fetched_at) "
+            "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            (source, query_slug, json.dumps(payload)),
+        )
+        db.commit()
+
+
+def _q_slug(q: str) -> str:
+    """Stable cache key for a query string — lowercase, non-alnum → '-'."""
+    return re.sub(r"[^a-z0-9]+", "-", (q or "").lower()).strip("-") or "empty"
+
+
+async def _archive_fetch(source: str, query: str, fetcher) -> list[dict]:
+    """Shared cache/fetch wrapper used by every archive endpoint."""
+    q_slug = _q_slug(query)
+    cached = _archives_cache_get(source, q_slug)
+    if cached is not None:
+        return cached
+    try:
+        result = await fetcher(query)
+    except Exception as e:
+        log.info("archives: %s fetch failed for %r — %s", source, query, e)
+        # Fall back to any stale cached copy we may have, even if expired.
+        with get_db() as db:
+            row = db.execute(
+                "SELECT payload FROM archives_cache WHERE source = ? AND query_slug = ?",
+                (source, q_slug),
+            ).fetchone()
+        if row:
+            try:
+                return json.loads(row["payload"])
+            except Exception:
+                pass
+        return []
+    _archives_cache_put(source, q_slug, result)
+    return result
+
+
+async def _fetch_perseus(query: str) -> list[dict]:
+    """Perseus Digital Library. Exposes Greek/Latin texts via a
+    JSON-LD endpoint. We search the catalogue and return a handful of
+    matching works with a canonical URL the client can open."""
+    url = "https://scaife.perseus.org/library/search"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15, connect=5),
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        follow_redirects=True,
+    ) as client:
+        r = await client.get(url, params={"q": query, "limit": 6})
+        r.raise_for_status()
+        data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    results: list[dict] = []
+    for hit in (data.get("results") or [])[:6]:
+        title = hit.get("label") or hit.get("title") or "Untitled"
+        urn = hit.get("urn") or hit.get("id") or ""
+        reader_url = f"https://scaife.perseus.org/reader/{urn}" if urn else ""
+        results.append({
+            "title": str(title)[:200],
+            "author": str(hit.get("creator") or hit.get("author") or "")[:120],
+            "language": str(hit.get("lang") or "")[:12],
+            "url": reader_url,
+            "snippet": str(hit.get("description") or "")[:240],
+        })
+    return results
+
+
+async def _fetch_chronam(query: str) -> list[dict]:
+    """Library of Congress Chronicling America. Free, no API key.
+    Returns scanned newspaper pages with a thumbnail and a deep link
+    to the high-resolution image viewer."""
+    url = "https://chroniclingamerica.loc.gov/search/pages/results/"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15, connect=5),
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        follow_redirects=True,
+    ) as client:
+        r = await client.get(url, params={
+            "andtext": query, "format": "json", "rows": 6,
+        })
+        r.raise_for_status()
+        data = r.json()
+    results: list[dict] = []
+    for item in (data.get("items") or [])[:6]:
+        date = str(item.get("date") or "")
+        iso_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if len(date) == 8 else date
+        results.append({
+            "title": str(item.get("title") or item.get("title_normal") or "")[:200],
+            "date": iso_date,
+            "place": str(item.get("place_of_publication") or "")[:160],
+            "snippet": str((item.get("ocr_eng") or ""))[:320],
+            "url": item.get("url", "").replace(".json", ""),
+            "thumbnail": item.get("thumbnail_url", ""),
+        })
+    return results
+
+
+async def _fetch_museums(query: str) -> list[dict]:
+    """Met Museum + Rijksmuseum open-access artworks. The Met's API is
+    two-stage (search returns object IDs, then lookup per-ID); we
+    limit to 4 Met results and fetch their images, then merge with up
+    to 4 Rijksmuseum hits."""
+    out: list[dict] = []
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15, connect=5),
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        follow_redirects=True,
+    ) as client:
+        # Met — search returns IDs; each lookup is a separate call
+        try:
+            r = await client.get(
+                "https://collectionapi.metmuseum.org/public/collection/v1/search",
+                params={"q": query, "hasImages": "true"},
+            )
+            r.raise_for_status()
+            ids = (r.json().get("objectIDs") or [])[:4]
+            for oid in ids:
+                rr = await client.get(
+                    f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{oid}"
+                )
+                if rr.status_code != 200:
+                    continue
+                obj = rr.json()
+                img = obj.get("primaryImageSmall") or obj.get("primaryImage") or ""
+                if not img:
+                    continue
+                out.append({
+                    "source": "Met",
+                    "title": str(obj.get("title") or "")[:200],
+                    "artist": str(obj.get("artistDisplayName") or "")[:160],
+                    "date": str(obj.get("objectDate") or "")[:80],
+                    "medium": str(obj.get("medium") or "")[:120],
+                    "image": img,
+                    "url": str(obj.get("objectURL") or ""),
+                })
+        except Exception as e:
+            log.info("archives: Met lookup failed — %s", e)
+
+        # Rijksmuseum — single search call with thumbnails included
+        try:
+            key = os.environ.get("RIJKS_API_KEY", "").strip()
+            params: dict[str, Any] = {"q": query, "ps": 4, "imgonly": "true", "format": "json"}
+            if key:
+                params["key"] = key
+            r = await client.get("https://www.rijksmuseum.nl/api/en/collection", params=params)
+            if r.status_code == 200:
+                for art in (r.json().get("artObjects") or [])[:4]:
+                    img = (art.get("webImage") or {}).get("url", "") or art.get("headerImage", {}).get("url", "")
+                    if not img:
+                        continue
+                    out.append({
+                        "source": "Rijksmuseum",
+                        "title": str(art.get("title") or "")[:200],
+                        "artist": str(art.get("principalOrFirstMaker") or "")[:160],
+                        "date": str(art.get("longTitle") or "")[:120],
+                        "medium": "",
+                        "image": img,
+                        "url": str(art.get("links", {}).get("web") or ""),
+                    })
+        except Exception as e:
+            log.info("archives: Rijksmuseum lookup failed — %s", e)
+
+    return out
+
+
+async def _fetch_librivox(query: str) -> list[dict]:
+    """LibriVox public-domain audiobooks. Free JSON API, no key."""
+    url = "https://librivox.org/api/feed/audiobooks"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15, connect=5),
+        headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        follow_redirects=True,
+    ) as client:
+        r = await client.get(url, params={
+            "title": query, "limit": 6, "format": "json",
+        })
+        if r.status_code != 200:
+            return []
+        try:
+            data = r.json()
+        except Exception:
+            return []
+    results: list[dict] = []
+    for book in (data.get("books") or [])[:6]:
+        authors = ", ".join(
+            f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
+            for a in (book.get("authors") or [])
+            if a.get("first_name") or a.get("last_name")
+        )
+        results.append({
+            "title": str(book.get("title") or "")[:200],
+            "author": authors[:160],
+            "language": str(book.get("language") or "")[:40],
+            "runtime": str(book.get("totaltime") or "")[:20],
+            "description": re.sub(r"<[^>]+>", " ", str(book.get("description") or ""))[:320].strip(),
+            "url": str(book.get("url_librivox") or ""),
+            "rss": str(book.get("url_rss") or ""),
+            "zip": str(book.get("url_zip_file") or ""),
+        })
+    return results
+
+
+@app.get("/api/archives")
+async def api_archives(q: str, sources: Optional[str] = None):
+    """Single endpoint that fans out to every archive the user asked
+    for. `q` is the search query; `sources` is an optional comma list
+    ("perseus,chronam,museums,librivox") — omit to query all four."""
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(400, "q is required")
+
+    requested = set((sources or "perseus,chronam,museums,librivox").split(","))
+    requested = {s.strip().lower() for s in requested if s.strip()}
+
+    jobs: list[tuple[str, Any]] = []
+    if "perseus"  in requested: jobs.append(("perseus",  _archive_fetch("perseus",  query, _fetch_perseus)))
+    if "chronam"  in requested: jobs.append(("chronam",  _archive_fetch("chronam",  query, _fetch_chronam)))
+    if "museums"  in requested: jobs.append(("museums",  _archive_fetch("museums",  query, _fetch_museums)))
+    if "librivox" in requested: jobs.append(("librivox", _archive_fetch("librivox", query, _fetch_librivox)))
+
+    results = await asyncio.gather(*[j for _, j in jobs], return_exceptions=True)
+    out: dict[str, list] = {}
+    for (name, _), res in zip(jobs, results):
+        out[name] = res if isinstance(res, list) else []
+    out["query"] = query
+    return out
+
+
 class MargReq(BaseModel):
     article_slug: str
     content: str
