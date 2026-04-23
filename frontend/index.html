@@ -6338,7 +6338,14 @@ function openQuizView() {
   $("quizFinal").style.display = "none";
 }
 
+let _quizInFlight = false;
 async function quizBegin() {
+  // Guard against rapid double-taps and any programmatic re-entry —
+  // two concurrent requests would race and the second one's response
+  // would overwrite the first's rendered questions.
+  if (_quizInFlight) return;
+  _quizInFlight = true;
+
   const slug = $("quizSlug").value || null;
   const count = Math.max(1, Math.min(10, parseInt($("quizCount").value || "5", 10)));
   const btn = $("quizBegin");
@@ -6350,21 +6357,36 @@ async function quizBegin() {
       timeout: 620000,
       body: JSON.stringify(llmBody({ slug, count })),
     });
-    Quiz.questions = r.questions || [];
-    Quiz.article = r.article;
+    const qs = Array.isArray(r?.questions) ? r.questions : [];
+    // Additional shape validation — backend already filters but we
+    // belt-and-brace in case a future schema tweak breaks it. Drop
+    // any question whose options array isn't exactly 4 entries.
+    Quiz.questions = qs.filter(q =>
+      q && typeof q.question === "string" && q.question.trim() !== "" &&
+      Array.isArray(q.options) && q.options.length === 4 &&
+      Number.isInteger(q.answer_index) &&
+      q.answer_index >= 0 && q.answer_index < 4
+    );
+    Quiz.article = r?.article || null;
     Quiz.idx = 0;
     Quiz.score = 0;
-    if (!Quiz.questions.length) throw new Error("No questions returned");
+    if (!Quiz.questions.length) throw new Error("No valid questions returned");
     $("quizStart").style.display = "none";
     $("quizFinal").style.display = "none";
     $("quizQuestion").style.display = "block";
     renderQuizQuestion();
   } catch (e) {
     toast("Quiz failed: " + e.message, "err");
+    // Leave the user on the start pane so they can try a different
+    // article / count without reopening the view.
+    $("quizStart").style.display = "grid";
+    $("quizQuestion").style.display = "none";
+    $("quizFinal").style.display = "none";
   } finally {
     btn.disabled = false;
     btn.textContent = "Begin quiz · ✦";
     progressEnd();
+    _quizInFlight = false;
   }
 }
 
@@ -6419,10 +6441,14 @@ function quizAdvance() {
 function quizFinish() {
   $("quizQuestion").style.display = "none";
   $("quizFinal").style.display = "block";
+  const total = Quiz.questions.length;
   $("quizFinalScore").textContent = Quiz.score;
-  $("quizFinalTotal").textContent = Quiz.questions.length;
-  const pct = Math.round((Quiz.score / Quiz.questions.length) * 100);
-  const grade = pct === 100 ? "perfect"
+  $("quizFinalTotal").textContent = total;
+  // Guard against zero-length (shouldn't happen — quizBegin throws —
+  // but NaN% would look broken if it slipped through).
+  const pct = total > 0 ? Math.round((Quiz.score / total) * 100) : 0;
+  const grade = total === 0 ? "—"
+              : pct === 100 ? "perfect"
               : pct >= 80 ? "well read"
               : pct >= 60 ? "solid"
               : pct >= 40 ? "getting there"
@@ -6438,6 +6464,8 @@ function quizFinish() {
 
 function quizReset() {
   Quiz.questions = []; Quiz.idx = 0; Quiz.score = 0; Quiz.article = null;
+  Quiz.answered = false;
+  $("quizQuestion").style.display = "none";
   $("quizFinal").style.display = "none";
   $("quizStart").style.display = "grid";
 }
